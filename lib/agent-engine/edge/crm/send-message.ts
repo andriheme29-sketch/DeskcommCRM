@@ -62,14 +62,25 @@ export interface SendMessageInput {
    * colidirem no ledger e o segundo virar `already_sent` sem ter saído.
    */
   template?: { name: string; language: string; values: Record<string, string> };
-  /** Presente = imagem da pasta da conversa em `whatsapp-media`; `body` é a legenda. */
-  media?: { storagePath: string; mime: string };
+  /**
+   * Presente = mídia da pasta da conversa em `whatsapp-media`; `body` é a legenda
+   * (imagem) ou o texto que a voz diz (áudio — o arquivo já o contém, mas o
+   * `body` continua sendo o que os gates de conteúdo avaliaram e o que o log
+   * mostra).
+   *
+   * `kind` decide a NATUREZA no handler, e o default é `image` de propósito:
+   * todo chamador que já existia (a foto do catálogo) manda mídia e esperava
+   * foto, então omitir não muda comportamento nenhum — só o áudio precisa dizer
+   * o que é. Um `kind` obrigatório quebraria os dublês de teste por um enfeite.
+   */
+  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' };
 }
 
 /**
- * O corpo que o handler de mensagens recebe: texto, template ou imagem da
+ * O corpo que o handler de mensagens recebe: texto, template ou mídia da
  * conversa. Exportado para o teste — o tipo decide o caminho no handler, e um
- * `type` errado manda a foto como texto sem ninguém ver.
+ * `type` errado manda a foto como texto (ou manda a voz como imagem) sem
+ * ninguém ver.
  */
 export function corpoDoEnvio(
   input: SendMessageInput,
@@ -86,12 +97,16 @@ export function corpoDoEnvio(
         }
       : input.media
         ? {
-            type: 'image' as const,
+            // O `type` é o que o handler repassa ao canal (`kind: input.type` →
+            // `wahaSendPlanFor`): `image` vira sendImage, `audio` vira sendVoice
+            // com conversão para ogg/opus. Trocar aqui troca o caminho inteiro.
+            type: input.media.kind === 'audio' ? ('audio' as const) : ('image' as const),
             media_storage_path: input.media.storagePath,
             media_mime: input.media.mime,
           }
         : { type: 'text' as const }),
-    // Foto sem legenda vai sem `body`: o schema do envio pede corpo não vazio.
+    // Mídia sem legenda vai sem `body`: o schema do envio aceita corpo OU mídia
+    // (`sendMessageSchema`), e a mídia já carrega o que o cliente vê/ouve.
     ...(input.body !== '' || !input.media ? { body: input.body } : {}),
     metadata: { idempotency_key: idempotencyKey },
   };

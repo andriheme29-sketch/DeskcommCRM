@@ -21,7 +21,7 @@ import type {
   ChannelSessionHealth,
 } from '../../channel-adapter';
 
-import { sinalizarDigitando } from '@/lib/messaging/presenca';
+import { sinalizarDigitando, sinalizarGravando, soltarPresenca } from '@/lib/messaging/presenca';
 
 import { CrmTransportError, type CrmEdgeConfig } from '../crm/mcp-client';
 import { sendTurnMessage, SendToolError } from '../crm/send-message';
@@ -84,6 +84,26 @@ export class WahaChannelAdapter implements ChannelAdapter {
    */
   async signalTyping(input: { tenantId: string; conversationId: string }): Promise<void> {
     await sinalizarDigitando(this.crmCfg.supabase, {
+      organizationId: input.tenantId,
+      conversationId: input.conversationId,
+    });
+  }
+
+  /**
+   * "gravando áudio…" antes da nota de voz do turno. Mesma disciplina do
+   * `signalTyping` — a borda do CRM resolve sessão e endereço, o message-plane
+   * não fala com o transporte.
+   */
+  async signalRecording(input: { tenantId: string; conversationId: string }): Promise<void> {
+    await sinalizarGravando(this.crmCfg.supabase, {
+      organizationId: input.tenantId,
+      conversationId: input.conversationId,
+    });
+  }
+
+  /** Solta a presença depois que o áudio sai — `paused` no aparelho do cliente. */
+  async clearPresence(input: { tenantId: string; conversationId: string }): Promise<void> {
+    await soltarPresenca(this.crmCfg.supabase, {
       organizationId: input.tenantId,
       conversationId: input.conversationId,
     });

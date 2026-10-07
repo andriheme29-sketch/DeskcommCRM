@@ -20,7 +20,7 @@ vi.mock("@/lib/waha/client", async (original) => ({
 }));
 
 import { getAdapter } from "@/lib/channels";
-import { sinalizarDigitando } from "@/lib/messaging/presenca";
+import { sinalizarDigitando, sinalizarGravando, soltarPresenca } from "@/lib/messaging/presenca";
 
 interface LinhaDeConversa {
   is_group: boolean;
@@ -216,5 +216,66 @@ describe("sinalizarDigitando — a mensagem que se está respondendo", () => {
     await sinalizarDigitando(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" });
 
     expect(sinal).toHaveBeenCalledWith(expect.objectContaining({ inboundExternalId: null }));
+  });
+});
+
+/**
+ * "gravando áudio…" — a presença da NOTA DE VOZ. Ela usa exatamente a mesma
+ * resolução de destino do "digitando…" (é o ponto do refactor: endereçamento tem
+ * uma fonte só), e por isso o que se prova aqui é o que MUDA: o estado que vai ao
+ * transporte e a obrigação de soltá-lo.
+ */
+describe("sinalizarGravando e soltarPresenca", () => {
+  it("acende 'recording' no número da sessão e no endereço do contato", async () => {
+    await sinalizarGravando(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" });
+
+    expect(setPresence).toHaveBeenCalledTimes(1);
+    expect(setPresence).toHaveBeenCalledWith("sessao-do-sitio", "5527999998888@c.us", "recording");
+  });
+
+  it("soltar a presença devolve o aparelho do cliente para 'paused'", async () => {
+    // Presença é ESTADO: sem esta chamada o "gravando…" fica aceso depois que o
+    // áudio já chegou — pior que nunca ter acendido.
+    await soltarPresenca(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" });
+
+    expect(setPresence).toHaveBeenCalledTimes(1);
+    expect(setPresence).toHaveBeenCalledWith("sessao-do-sitio", "5527999998888@c.us", "paused");
+  });
+
+  it("a leitura da conversa continua escopada por organization_id", async () => {
+    await sinalizarGravando(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" });
+    expect(filtros.conversations).toContainEqual(["organization_id", "org-1"]);
+    expect(filtros.conversations).toContainEqual(["id", "conv-1"]);
+  });
+
+  it("sessão fora do ar não recebe nem gravação nem soltura", async () => {
+    linha!.channel_sessions!.status = "SCAN_QR_CODE";
+    await sinalizarGravando(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" });
+    await soltarPresenca(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" });
+    expect(setPresence).not.toHaveBeenCalled();
+  });
+
+  it("canal sem presença de gravação é no-op — testa o método, nunca o provider", async () => {
+    linha!.channel_sessions = {
+      provider: "zernio",
+      waha_session_name: null,
+      meta_phone_number_id: null,
+      zernio_account_id: "conta-1",
+      status: "WORKING",
+    };
+    expect(getAdapter("zernio").signalRecording).toBeUndefined();
+    await expect(
+      sinalizarGravando(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" }),
+    ).resolves.toBeUndefined();
+    expect(setPresence).not.toHaveBeenCalled();
+  });
+
+  it("a recusa do transporte SOBE — quem decide engolir é o turno", async () => {
+    // Mesma doutrina do "digitando…": silêncio aqui esconderia de todo chamador
+    // futuro que a chamada nem chega.
+    setPresence.mockRejectedValueOnce(new Error("waha fora"));
+    await expect(
+      sinalizarGravando(supabaseDeTeste(), { organizationId: "org-1", conversationId: "conv-1" }),
+    ).rejects.toThrow("waha fora");
   });
 });

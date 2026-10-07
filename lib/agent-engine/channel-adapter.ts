@@ -39,13 +39,18 @@ export interface ChannelSendInput {
     language: string;
     /** Valor por slot, chaveado por `slotKey` — a mesma chave da tela. */
     values: Record<string, string>;
-  };  /**
-   * Presente = este envio é uma IMAGEM já guardada no Storage da conversa, e o
-   * `body` é a legenda (pode ser vazio). Hoje só a foto do catálogo usa
-   * (`agent/fotos-do-produto.ts`). Caminho, nunca URL nem bytes: quem assina a
-   * URL curta para o canal é o handler de mensagens, como em toda mídia.
+  };
+  /**
+   * Presente = este envio é uma MÍDIA já guardada no Storage da conversa, e o
+   * `body` é a legenda (pode ser vazio). Caminho, nunca URL nem bytes: quem
+   * assina a URL curta para o canal é o handler de mensagens, como em toda mídia.
+   *
+   * `kind` escolhe a NATUREZA no canal (`image` = foto, `audio` = nota de voz) e
+   * é opcional para não quebrar adapters e dublês antigos: omitido vale `image`,
+   * que é o único uso que existia (`agent/fotos-do-produto.ts`). Quem fala é o
+   * `agent/audio-do-turno.ts`.
    */
-  media?: { storagePath: string; mime: string };
+  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' };
 }
 
 /**
@@ -125,6 +130,27 @@ export interface ChannelAdapter {
    * Um canal sem presença ainda recebe o conserto inteiro menos o indicador.
    */
   signalTyping?(input: { tenantId: string; conversationId: string }): Promise<void>;
+  /**
+   * Acende o "gravando áudio…" na conversa, quando a próxima bolha é uma NOTA DE
+   * VOZ. É a mesma decoração do `signalTyping`, com o rótulo que corresponde ao
+   * que vai sair — acender "digitando…" e mandar voz seria o robô se denunciando
+   * pelo avesso.
+   *
+   * OPCIONAL pela mesma razão do irmão: canal sem presença, ou sem presença de
+   * GRAVAÇÃO, simplesmente não implementa, e quem chama testa a presença do
+   * método em vez de perguntar qual é o canal. Hoje o WAHA suporta (`recording`);
+   * o canal oficial não tem o estado e ganha só a espera — que é a parte que
+   * carrega o valor.
+   *
+   * Quem chama DEVE soltar a presença depois (o áudio sai com `paused`), senão o
+   * "gravando…" fica aceso no aparelho do cliente — ver `lib/messaging/presenca.ts`.
+   */
+  signalRecording?(input: { tenantId: string; conversationId: string }): Promise<void>;
+  /**
+   * Apaga o indicador de presença (volta a "disponível"). Par do `signalRecording`:
+   * gravando que nunca é solto é pior que não acender.
+   */
+  clearPresence?(input: { tenantId: string; conversationId: string }): Promise<void>;
   /** o que o canal suporta agora (estático por canal na v1). */
   capabilities(): ChannelCapabilities;
   /** custo por mensagem do canal. */

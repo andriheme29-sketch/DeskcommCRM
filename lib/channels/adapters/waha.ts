@@ -150,6 +150,29 @@ export const wahaAdapter: ChannelAdapter = {
     await client.setPresence(input.sessionRef, input.recipient, "typing");
   },
 
+  /**
+   * "gravando áudio…" no aparelho do cliente, enquanto a nota de voz vai sair.
+   *
+   * Mesmo NOOP do `signalTyping` quando não há transporte: indicador decorativo
+   * não derruba o produto numa instalação sem o container de pé.
+   */
+  async signalRecording(input: { sessionRef: string; recipient: string }): Promise<void> {
+    const client = getWahaClient();
+    if (!client) return;
+    await client.setPresence(input.sessionRef, input.recipient, "recording");
+  },
+
+  /**
+   * Solta a presença (volta a "disponível"). `paused` é o estado que apaga o
+   * indicador no WhatsApp — sem esta chamada o "gravando…" fica aceso no
+   * aparelho do cliente depois que o áudio já chegou.
+   */
+  async clearPresence(input: { sessionRef: string; recipient: string }): Promise<void> {
+    const client = getWahaClient();
+    if (!client) return;
+    await client.setPresence(input.sessionRef, input.recipient, "paused");
+  },
+
   async editMessage(input: {
     sessionRef: string;
     recipient: string | null;

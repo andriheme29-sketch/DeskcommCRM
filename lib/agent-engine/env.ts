@@ -272,6 +272,21 @@ const envSchema = z.object({
   // está viva. Só tem efeito nos canais com o gate ligado — canal 'open' (o
   // default) nunca consulta autorização.
   AI_ALLOWLIST_TTL_DAYS: z.coerce.number().int().positive().default(21),
+  // VOZ DO TURNO (TTS, ElevenLabs) — a chave que faz o agente responder por
+  // NOTA DE VOZ humana (`lib/tts/elevenlabs.ts` → `agent/audio-do-turno.ts`).
+  //
+  // VAZIA = a instalação não fala, e é o padrão: `configDaVoz` devolve `null`,
+  // o `enviar_como_audio` do `send_message` degrada para texto e NADA mais muda.
+  // Nenhuma instalação self-host é obrigada a contratar TTS, e por isso as três
+  // são opcionais com default '' e NÃO usam `.url()`/`.min(1)` — o motivo é o de
+  // sempre nesta casa: `loadEnv` lança no boot do worker, e uma variável de
+  // FEATURE não pode ter o poder de derrubar o atendimento inteiro.
+  ELEVENLABS_API_KEY: z.string().optional().default(''),
+  // Vazio = a voz premade padrão do produto (`VOZ_PADRAO`). O id é do catálogo do
+  // provedor: quem troca, troca por outro id de lá.
+  ELEVENLABS_VOICE_ID: z.string().optional().default(''),
+  // Vazio = `MODELO_PADRAO` (`eleven_v4`, o multilíngue da casa).
+  ELEVENLABS_MODEL_ID: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

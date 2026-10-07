@@ -1,5 +1,6 @@
 /**
- * "digitando…" — a metade do atraso humano que é do CANAL.
+ * Presença na conversa — "digitando…" e "gravando áudio…", a metade do atraso
+ * humano que é do CANAL.
  *
  * ─── O que este módulo é ────────────────────────────────────────────────────
  *
@@ -15,7 +16,15 @@
  * mandar a mensagem. Uma segunda maneira de descobrir "por qual número, para
  * qual endereço" divergiria da primeira no dia em que uma delas mudasse, e o
  * sintoma seria "digitando…" aparecendo numa conversa e a mensagem saindo
- * noutra. Endereçamento tem uma fonte só.
+ * noutra. Endereçamento tem uma fonte só — e agora que existem TRÊS usos dele
+ * (digitando, gravando, soltar), a razão pesa o triplo.
+ *
+ * ─── Gravação é ESTADO, digitação é EVENTO ──────────────────────────────────
+ *
+ * "digitando…" o canal apaga sozinho; "gravando…" fica aceso no aparelho do
+ * cliente até alguém tirá-lo. Por isso quem acende gravação TEM de soltar
+ * (`soltarPresenca`) — gravando que nunca é solto é pior que nunca acender, e o
+ * sintoma é a cliente esperando uma voz que já chegou.
  *
  * ─── Silêncio é o desfecho normal ───────────────────────────────────────────
  *
@@ -63,10 +72,23 @@ export interface SinalizarDigitandoInput {
   conversationId: string;
 }
 
-export async function sinalizarDigitando(
+/** O destino resolvido: por qual adapter, em qual sessão, para qual endereço. */
+interface DestinoDaPresenca {
+  adapter: ReturnType<typeof getAdapter>;
+  sessionRef: string;
+  recipient: string;
+}
+
+/**
+ * A parte comum aos três: achar a conversa, exigir sessão saudável, escolher o
+ * adapter e endereçar. Devolve `null` (nunca lança) em todos os desfechos que
+ * querem dizer "não há o que sinalizar" — é o mesmo vocabulário do módulo
+ * inteiro, e é o que mantém a decisão num lugar só.
+ */
+async function resolverDestino(
   supabase: SupabaseClient,
   input: SinalizarDigitandoInput,
-): Promise<void> {
+): Promise<DestinoDaPresenca | null> {
   const { data } = await supabase
     .from("conversations")
     .select(
@@ -78,17 +100,14 @@ export async function sinalizarDigitando(
     .maybeSingle();
 
   const conversa = data as unknown as ConversaParaPresenca | null;
-  if (!conversa) return;
+  if (!conversa) return null;
 
   const sessao = conversa.channel_sessions;
   // Sessão fora do ar: o canal recusaria de qualquer forma, e perguntar custa
   // uma ida à rede dentro do caminho de resposta ao cliente.
-  if (!sessao || sessao.status !== SESSAO_SAUDAVEL) return;
+  if (!sessao || sessao.status !== SESSAO_SAUDAVEL) return null;
 
   const adapter = getAdapter(sessao.provider ?? DEFAULT_CHANNEL_PROVIDER);
-  // Testa a presença do método — nunca pergunta QUAL provider é (invariante 1
-  // da doutrina de restrição de canal).
-  if (!adapter.signalTyping) return;
 
   const recipient = adapter.resolveRecipient({
     isGroup: conversa.is_group,
@@ -97,13 +116,70 @@ export async function sinalizarDigitando(
     waIdentity: conversa.contacts?.wa_identity,
     waLid: conversa.contacts?.wa_lid,
   });
-  if (!recipient) return;
+  if (!recipient) return null;
 
-  await adapter.signalTyping({
+  return { adapter, sessionRef: resolveSessionRef(sessao), recipient };
+}
+
+export async function sinalizarDigitando(
+  supabase: SupabaseClient,
+  input: SinalizarDigitandoInput,
+): Promise<void> {
+  const destino = await resolverDestino(supabase, input);
+  // Testa a presença do método — nunca pergunta QUAL provider é (invariante 1
+  // da doutrina de restrição de canal).
+  if (!destino || !destino.adapter.signalTyping) return;
+
+  await destino.adapter.signalTyping({
     organizationId: input.organizationId,
-    sessionRef: resolveSessionRef(sessao),
-    recipient,
+    sessionRef: destino.sessionRef,
+    recipient: destino.recipient,
     inboundExternalId: await ultimaMensagemDoCliente(supabase, input),
+  });
+}
+
+/**
+ * Acende "gravando áudio…" — o par do `sinalizarDigitando` para quando a
+ * próxima bolha é uma NOTA DE VOZ.
+ *
+ * Endereça pelo MESMO caminho do `sinalizarDigitando`, `inboundExternalId`
+ * inclusive: o canal que sinaliza presença de gravação respondendo a uma
+ * mensagem específica é o mesmo que já o pede para digitação, e manter as duas
+ * assinaturas iguais evita que um canal futuro precise de um segundo caminho de
+ * endereçamento só para esta metade. É uma leitura por índice, uma vez por
+ * áudio — não é o custo que decide nada aqui.
+ */
+export async function sinalizarGravando(
+  supabase: SupabaseClient,
+  input: SinalizarDigitandoInput,
+): Promise<void> {
+  const destino = await resolverDestino(supabase, input);
+  if (!destino || !destino.adapter.signalRecording) return;
+
+  await destino.adapter.signalRecording({
+    organizationId: input.organizationId,
+    sessionRef: destino.sessionRef,
+    recipient: destino.recipient,
+    inboundExternalId: await ultimaMensagemDoCliente(supabase, input),
+  });
+}
+
+/**
+ * Solta a presença (volta a "disponível"). Chamar SEMPRE depois de
+ * `sinalizarGravando`, mesmo quando o áudio não saiu: indicador aceso para uma
+ * voz que nunca vem é pior que indicador nenhum.
+ */
+export async function soltarPresenca(
+  supabase: SupabaseClient,
+  input: SinalizarDigitandoInput,
+): Promise<void> {
+  const destino = await resolverDestino(supabase, input);
+  if (!destino || !destino.adapter.clearPresence) return;
+
+  await destino.adapter.clearPresence({
+    organizationId: input.organizationId,
+    sessionRef: destino.sessionRef,
+    recipient: destino.recipient,
   });
 }
 

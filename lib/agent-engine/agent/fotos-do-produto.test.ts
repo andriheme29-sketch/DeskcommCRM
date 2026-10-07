@@ -195,4 +195,30 @@ describe("corpoDoEnvio — a foto chega ao handler como imagem da conversa", () 
   it("texto comum segue texto", () => {
     expect(corpoDoEnvio({ ...base, body: "oi" }, "k")).toMatchObject({ type: "text", body: "oi" });
   });
+
+  it("media kind audio sai como AUDIO — a nota de voz não pode virar imagem", () => {
+    expect(
+      corpoDoEnvio(
+        {
+          ...base,
+          body: "oi, tudo bem?",
+          media: { storagePath: "v.mp3", mime: "audio/mpeg", kind: "audio" },
+        },
+        "k",
+      ),
+    ).toEqual({
+      conversation_id: CONVERSA,
+      type: "audio",
+      media_storage_path: "v.mp3",
+      media_mime: "audio/mpeg",
+      body: "oi, tudo bem?",
+      metadata: { idempotency_key: "k" },
+    });
+  });
+
+  it("sem kind, a mídia continua IMAGEM — o default protege quem já chamava", () => {
+    expect(
+      corpoDoEnvio({ ...base, body: "", media: { storagePath: "p.jpg", mime: "image/jpeg" } }, "k"),
+    ).toMatchObject({ type: "image" });
+  });
 });

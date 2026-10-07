@@ -346,6 +346,45 @@ export interface ChannelAdapter {
   }): Promise<void>;
 
   /**
+   * Acende o "gravando áudio…" na conversa do cliente.
+   *
+   * Mesma razão do `signalTyping`, com o rótulo certo: o agente agora também
+   * responde por NOTA DE VOZ (`lib/agent-engine/agent/audio-do-turno.ts`), e
+   * mostrar "digitando…" antes de uma voz é dizer ao cliente que o indicador não
+   * corresponde ao que ele vai ouvir — o robô se denunciando pelo avesso.
+   *
+   * OPCIONAL como o irmão: canal que não modela presença de gravação não
+   * implementa, e quem chama testa a presença do método em vez de perguntar QUAL
+   * provider é. Sem ele o cliente ainda ganha a espera pela duração do áudio, que
+   * é a metade do conserto que carrega o valor.
+   *
+   * LANÇA quando o transporte recusa, pela mesma razão do `signalTyping`: engolir
+   * aqui esconderia de todo chamador futuro que a chamada nem chega.
+   *
+   * Quem acende DEVE apagar (`clearPresence`) quando o áudio sai — gravando que
+   * nunca é solto deixa o cliente esperando uma voz que já foi.
+   */
+  signalRecording?(input: ChannelTenantScope & {
+    sessionRef: string;
+    recipient: string;
+    inboundExternalId: string | null;
+  }): Promise<void>;
+
+  /**
+   * Apaga o indicador de presença da conversa (volta a "disponível").
+   *
+   * Par do `signalRecording`. Existe porque presença de gravação é ESTADO, não
+   * evento: o canal a mantém acesa no aparelho do cliente até alguém tirá-la, e
+   * deixá-la acesa é pior que nunca tê-la acendido.
+   *
+   * OPCIONAL como os demais; quem chama testa a presença do método.
+   */
+  clearPresence?(input: ChannelTenantScope & {
+    sessionRef: string;
+    recipient: string;
+  }): Promise<void>;
+
+  /**
    * Troca o texto de uma mensagem que o próprio atendente já enviou.
    *
    * `externalId` é o que o CRM gravou (`messages.external_id`); `recipient` é o

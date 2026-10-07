@@ -78,6 +78,15 @@ import {
   prepararFotosDoProduto,
   type FotoParaEnvio,
 } from './fotos-do-produto';
+import {
+  esperaDoAudio,
+  prepararAudioDoTurno,
+  subirAudioNoStorage,
+  type AudioParaEnvio,
+  type SubirAudio,
+} from './audio-do-turno';
+import { configDaVoz, sintetizarVoz, type ConfigDaVoz } from '@/lib/tts/elevenlabs';
+import { loadEnv } from '../env';
 import { enqueueJob, rescheduleJob, type JobRow, type Queryable } from '../queue/queue';
 import {
   applyLeadStateUpdate,
@@ -247,7 +256,7 @@ export const AGENT_TOOL_DEFS = {
   },
   send_message: {
     description:
-      'Envia UMA mensagem de WhatsApp ao lead desta conversa. É o ÚNICO jeito de falar com o lead; texto fora desta tool nunca é enviado.',
+      'Envia UMA mensagem de WhatsApp ao lead desta conversa. É o ÚNICO jeito de falar com o lead; texto fora desta tool nunca é enviado. Por padrão é TEXTO; com `enviar_como_audio` sai como nota de voz.',
     inputSchema: z.object({
       body: z.string().min(1).describe('corpo da mensagem, em pt-br, pronto para envio'),
       produto_codigo: z
@@ -256,6 +265,15 @@ export const AGENT_TOOL_DEFS = {
         .describe(
           'código de um produto do catálogo (o `codigo` de crm_search_products) que tem `fotos`: ' +
             'as fotos dele vão junto, e o texto vira a legenda da primeira',
+        ),
+      enviar_como_audio: z
+        .boolean()
+        .optional()
+        .describe(
+          'true = manda esta mensagem como NOTA DE VOZ, na voz da marca, em vez de texto. ' +
+            'O áudio diz exatamente o `body` — não escreva uma coisa e fale outra. Use só nas ' +
+            'etapas em que a operação pediu voz. Se a instalação não tiver voz configurada, ou ' +
+            'se a síntese falhar, a MESMA mensagem sai em TEXTO: o lead nunca fica sem resposta.',
         ),
     }),
   },
@@ -1254,6 +1272,26 @@ export interface InboundTurnDeps {
    * organização e o egress com allowlist (`lib/ai/decisao/ponto.ts`).
    */
   jev?: DependenciasDoPonto;
+  /**
+   * Voz do turno (TTS). AUSENTE = o default de produção: a chave do ambiente
+   * (`loadEnv().ELEVENLABS_*`), que numa instalação sem TTS deixa `config` em
+   * `null` e faz todo `enviar_como_audio` sair em texto. Injetável para o teste
+   * provar a degradação sem tocar a rede nem gastar crédito.
+   */
+  voz?: VozDoTurno;
+}
+
+/**
+ * A voz do turno: a porta de TTS + o upload, montados num lugar só para o teste
+ * poder injetar dublês. Não carrega regra nenhuma — quem decide quando falar é o
+ * modelo (argumento da tool) e quem decide o que dizer é o `body` dele.
+ */
+export interface VozDoTurno {
+  /** `null` = instalação sem TTS (sem `ELEVENLABS_API_KEY`): o áudio degrada para texto. */
+  config: ConfigDaVoz | null;
+  fetchImpl: typeof fetch;
+  /** Sobe os bytes para a pasta da conversa em `whatsapp-media`. */
+  subir: SubirAudio;
 }
 
 /** Checkpoint mais recente do lead — a memória que atravessa sessões. */
@@ -3158,7 +3196,7 @@ async function executarTurnoDoAgente(
     }),
     send_message: tool({
       ...AGENT_TOOL_DEFS.send_message,
-      execute: async ({ body, produto_codigo }) => {
+      execute: async ({ body, produto_codigo, enviar_como_audio }) => {
         // CORPO VAZIO NÃO SAI. Medido ao vivo (2026-09-19): o `gpt-4o-mini`
         // chamou `send_message` várias vezes com corpo que virou vazio e o
         // WhatsApp do cliente recebeu bolhas em branco. O schema garante
@@ -3243,6 +3281,25 @@ async function executarTurnoDoAgente(
         // fora do lock do número — a cópia no Storage é rede. Código errado volta
         // ao modelo sem enviar nada; foto que não copiou sai do envio e o texto
         // segue (degradar para só texto). Ver `agent/fotos-do-produto.ts`.
+        // Áudio e foto não vão juntos: uma nota de voz não carrega álbum, e
+        // aceitar os dois em silêncio descartaria as fotos sem ninguém ver. Volta
+        // ao modelo como erro de ENSINO — ele escolhe um dos dois e chama de novo.
+        if (
+          enviar_como_audio === true &&
+          produto_codigo !== undefined &&
+          produto_codigo.trim() !== ''
+        ) {
+          return {
+            ok: false,
+            error: {
+              code: 'audio_ou_foto',
+              message:
+                'Esta chamada pediu áudio E fotos do produto ao mesmo tempo. Escolha UM caminho: ' +
+                'chame send_message só com `enviar_como_audio: true` para a nota de voz, ou só com ' +
+                '`produto_codigo` para as fotos.',
+            },
+          };
+        }
         let fotosDoProduto: FotoParaEnvio[] = [];
         let fotosQueFaltaram = 0;
         if (produto_codigo !== undefined && produto_codigo.trim() !== '' && !preview) {
@@ -3256,6 +3313,57 @@ async function executarTurnoDoAgente(
           }
           fotosDoProduto = preparadas.fotos;
           fotosQueFaltaram = preparadas.tinha - preparadas.fotos.length;
+        }
+        // A VOZ DA MENSAGEM (TTS). Sintetizada e subida ANTES da cadeia de
+        // guardrails e FORA do lock do número — pelo mesmo motivo da foto (#654):
+        // sintetizar e subir são rede, e segurar a fila do NÚMERO durante a rede
+        // é o que o lock existe para impedir.
+        //
+        // O texto da voz é o `body` PRÉ-cadeia. Parece um detalhe e é o único
+        // ponto em que esta feature pode mentir: se um gate EMENDAR o corpo
+        // (só o disclosure F4-05 faz isso hoje, prependando o aviso legal), o
+        // áudio já não diz o que vai sair. A regra é dura e mora no `send`: a
+        // voz só vai quando o corpo final é EXATAMENTE o gravado; emendado, sai
+        // em texto. Custa uma síntese perdida no primeiro envio de uma
+        // organização que exige disclosure — o preço de nunca mandar uma voz
+        // divergente do que o CRM registrou como dito.
+        let audioDaVoz: AudioParaEnvio | null = null;
+        if (enviar_como_audio === true && !preview) {
+          const voz: VozDoTurno =
+            deps.voz ??
+            (() => {
+              const env = loadEnv();
+              return {
+                config: configDaVoz({
+                  ELEVENLABS_API_KEY: env.ELEVENLABS_API_KEY,
+                  ELEVENLABS_VOICE_ID: env.ELEVENLABS_VOICE_ID,
+                  ELEVENLABS_MODEL_ID: env.ELEVENLABS_MODEL_ID,
+                }),
+                fetchImpl: fetch,
+                subir: subirAudioNoStorage(runLog),
+              };
+            })();
+          const pronta = await prepararAudioDoTurno(
+            (texto) =>
+              sintetizarVoz(texto, {
+                config: voz.config,
+                fetchImpl: voz.fetchImpl,
+                log: runLog,
+              }),
+            voz.subir,
+            { tenantId, conversationId: input.conversationId, texto: body },
+          );
+          if (pronta.ok) {
+            audioDaVoz = pronta.audio;
+          } else {
+            // Degrada para texto, e o motivo vai ao log: chave revogada, cota
+            // estourada e provedor fora do ar são coisas que o operador precisa
+            // VER, não adivinhar pelo atendimento ter saído sem voz.
+            runLog.warn('áudio pedido não saiu — a mensagem segue em texto', {
+              motivo: pronta.code,
+              detalhe: pronta.message,
+            });
+          }
         }
         // F4-04: sinaliza (independente do gate F4-01/F4-08) se ESTA candidata é uma
         // promessa fora de tabela — usado só para correlacionar com o jailbreak no fim do
@@ -3374,6 +3482,52 @@ async function executarTurnoDoAgente(
               // antes da espera mantém o desfecho de preview idêntico ao de antes —
               // `preview_transport_forbidden` na hora, e não depois da pausa.
               const canal = liveChannel();
+              // NOTA DE VOZ: a pausa é a DURAÇÃO do arquivo, não o tamanho do
+              // texto — ninguém "digita" um áudio. E o indicador é "gravando…":
+              // acender "digitando…" e mandar voz seria o robô se denunciando
+              // pelo avesso (ver `signalRecording` no contrato de canal).
+              //
+              // A pausa do áudio NÃO desconta o tempo de processamento, e isso é
+              // o oposto da decisão do #849 para o texto — de propósito. Lá o
+              // desconto existe porque o cliente percebe o "digitando" como a
+              // espera INTEIRA pelo texto. Gravar é um ato físico que acontece
+              // DEPOIS de a resposta estar pronta: o indicador precisa durar o
+              // que dura a gravação, senão o áudio chega colado no fim de um
+              // turno que já demorou 40 s e o "gravando áudio" nunca aparece.
+              if (audioDaVoz !== null) {
+                const sinalizar = canal.signalRecording
+                  ? (): Promise<void> =>
+                      canal.signalRecording!({ tenantId, conversationId: input.conversationId })
+                  : undefined;
+                const espera = esperaDoAudio(
+                  audioDaVoz.duracaoMs,
+                  () =>
+                    // Mesmo jitter anti-ban das bolhas: a nota de voz é uma
+                    // mensagem física como qualquer outra.
+                    (pacingDoTurno?.knobs.throttleMs ?? 1200) +
+                    Math.floor(Math.random() * (pacingDoTurno?.knobs.jitterMaxMs ?? 800)),
+                );
+                if (sinalizar) {
+                  // Falha-macio num ponto só, como em `esperarComoHumano`: o
+                  // indicador é decoração, a nota de voz é o produto.
+                  try {
+                    await sinalizar();
+                  } catch (err) {
+                    runLog.warn('não deu para acender "gravando áudio"', {
+                      motivo: err instanceof Error ? err.name : 'erro_desconhecido',
+                    });
+                  }
+                }
+                await (deps.sleep ?? ((s: number) => new Promise((resolve) => setTimeout(resolve, s))))(
+                  espera,
+                );
+                runLog.info('espera do áudio antes da nota de voz', {
+                  duracao_ms: audioDaVoz.duracaoMs,
+                  espera_ms: espera,
+                  fora_do_lock: true,
+                });
+                return;
+              }
               const ms = await esperarComoHumano({
                 texto:
                   splitForSend(
@@ -3404,7 +3558,7 @@ async function executarTurnoDoAgente(
             },
             // `finalBody` = corpo após a cadeia (o disclosureGate F4-05 pode prependar o
             // disclosure via inject); é ELE que vai ao canal, não o `body` capturado da tool.
-            send: (finalBody: string) => {
+            send: async (finalBody: string) => {
               corposEnviados.push(finalBody);
               const sleep =
                 deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -3417,7 +3571,7 @@ async function executarTurnoDoAgente(
                 Math.floor(Math.random() * (pacingDoTurno?.knobs.jitterMaxMs ?? 800));
               const enviar = (
                 corpo: string,
-                media?: FotoParaEnvio,
+                media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' },
               ): Promise<ChannelSendResult> => {
                 seq += 1;
                 return liveChannel().send({
@@ -3432,29 +3586,70 @@ async function executarTurnoDoAgente(
                   ...(media ? { media } : {}),
                 });
               };
-              // Cada foto é uma mensagem física: só vão as que cabem no que resta do teto
-              // do turno (a checagem de `max_sends_per_turn` acima roda uma vez, antes).
-              // O resto é medido ANTES DE CADA FOTO, depois do texto: o texto acima do
-              // teto de legenda sai à parte e também gasta o teto.
-              return enviarComFotos(finalBody, fotosDoProduto, {
-                sleep,
-                jitter,
-                restantes: () => maxSendsPerTurn - seq,
-                enviarFoto: (foto, legenda) => enviar(legenda, foto),
-                enviarTexto: (texto) =>
-                  sendInBubbles(texto, {
-                    enabled: agentConfig?.splitMessages ?? false,
-                    maxChars: agentConfig?.splitMaxChars ?? 600,
-                    // O teto do turno vale para as bolhas: o que passa dele vai junto na última.
-                    maxBubbles: Math.max(1, maxSendsPerTurn - seq),
-                    sleep,
-                    jitter,
-                    // A pausa humana do turno NÃO mora mais aqui: ela subiu para
-                    // `esperaForaDoLock` (paga antes de o guardrail tomar o lock do número) —
-                    // issue #654. Neste ponto fica só o jitter anti-ban entre bolhas.
-                    send: (bubble) => enviar(bubble),
-                  }),
-              });
+              try {
+                // NOTA DE VOZ — uma mensagem física só, sem fatiamento: não se
+                // fatia um áudio em bolhas. A condição `finalBody === body` é a
+                // regra dura que impede a única mentira possível desta feature: a
+                // voz foi gravada com o texto PRÉ-cadeia, e se um gate emendou o
+                // corpo (hoje só o disclosure F4-05) o áudio já não diz o que vai
+                // sair — então sai TEXTO, o corpo final e íntegro.
+                if (audioDaVoz !== null && finalBody === body) {
+                  return await enviar(finalBody, {
+                    storagePath: audioDaVoz.storagePath,
+                    mime: audioDaVoz.mime,
+                    kind: 'audio',
+                  });
+                }
+                if (audioDaVoz !== null) {
+                  runLog.warn('áudio descartado — a cadeia emendou o corpo; a mensagem sai em texto', {
+                    job_id: liveJob().id,
+                  });
+                }
+                // Cada foto é uma mensagem física: só vão as que cabem no que resta do teto
+                // do turno (a checagem de `max_sends_per_turn` acima roda uma vez, antes).
+                // O resto é medido ANTES DE CADA FOTO, depois do texto: o texto acima do
+                // teto de legenda sai à parte e também gasta o teto.
+                return await enviarComFotos(finalBody, fotosDoProduto, {
+                  sleep,
+                  jitter,
+                  restantes: () => maxSendsPerTurn - seq,
+                  enviarFoto: (foto, legenda) => enviar(legenda, foto),
+                  enviarTexto: (texto) =>
+                    sendInBubbles(texto, {
+                      enabled: agentConfig?.splitMessages ?? false,
+                      maxChars: agentConfig?.splitMaxChars ?? 600,
+                      // O teto do turno vale para as bolhas: o que passa dele vai junto na última.
+                      maxBubbles: Math.max(1, maxSendsPerTurn - seq),
+                      sleep,
+                      jitter,
+                      // A pausa humana do turno NÃO mora mais aqui: ela subiu para
+                      // `esperaForaDoLock` (paga antes de o guardrail tomar o lock do número) —
+                      // issue #654. Neste ponto fica só o jitter anti-ban entre bolhas.
+                      send: (bubble) => enviar(bubble),
+                    }),
+                });
+              } finally {
+                // Soltar o "gravando…" é OBRIGATÓRIO e é por isso que está num
+                // `finally`: vale para a voz que saiu, para a que virou texto e
+                // para o envio que falhou. Presença é ESTADO no aparelho do
+                // cliente — deixá-la acesa é pior que nunca tê-la acendido. Falha
+                // ao soltar não derruba o turno: a mensagem é o produto.
+                if (audioDaVoz !== null) {
+                  const canal = liveChannel();
+                  if (canal.clearPresence) {
+                    try {
+                      await canal.clearPresence({
+                        tenantId,
+                        conversationId: input.conversationId,
+                      });
+                    } catch (err) {
+                      runLog.warn('não deu para soltar o "gravando áudio"', {
+                        motivo: err instanceof Error ? err.name : 'erro_desconhecido',
+                      });
+                    }
+                  }
+                }
+              }
             },
           };
           let chain = await runBeforeSend(beforeSendArgs);
