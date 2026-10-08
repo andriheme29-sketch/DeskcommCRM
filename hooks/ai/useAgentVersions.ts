@@ -33,6 +33,12 @@ export interface AgentVersionRow {
   split_messages: boolean;
   split_max_chars: number;
   inbound_debounce_ms: number | null;
+  /** A voz do agente (0591). `voice_mode` null = o comportamento de antes. */
+  voice_mode: string | null;
+  voice_provider: string | null;
+  voice_credential_id: string | null;
+  voice_id: string | null;
+  voice_model: string | null;
   followup: {
     enabled: boolean;
     flow_pointer_ids: string[];

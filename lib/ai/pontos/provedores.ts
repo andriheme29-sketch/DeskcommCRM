@@ -221,15 +221,115 @@ export const IDS_DE_PROVEDOR_DE_DECISAO = PROVEDORES_DE_DECISAO.map(
   ...(typeof PROVEDORES_DE_DECISAO)[number]["id"][],
 ];
 
+/**
+ * OS PROVEDORES QUE FALAM — a terceira lista irmã, pelo mesmo molde da do Jev.
+ *
+ * Voz NÃO é texto. Um provedor de voz escolhido como cérebro do atendimento
+ * morreria em `LlmProviderUnknownError` no primeiro turno — exatamente o defeito
+ * que a lista do Jev existe para não cometer. Por isso a separação é por LISTA e
+ * não por um campo `natureza`: um consumidor NOVO de `PROVEDORES` não vê nenhum
+ * destes, que é o lado seguro. Quem precisa deles são as superfícies de CHAVE
+ * (cadastro, validação, listagem) e a tela do agente.
+ *
+ *   - `elevenlabs` — o provedor nativo. A chave sozinha já fala; o endereço é
+ *     opcional (proxy/self-host da própria ElevenLabs).
+ *   - `tts-aberto` — QUALQUER gateway compatível com o `/audio/speech` da OpenAI
+ *     (9Router, LiteLLM, proxy corporativo). Aqui o endereço é OBRIGATÓRIO: sem
+ *     ele não há com quem falar.
+ *
+ * O endereço mora na CREDENCIAL (`ai_provider_credentials.base_url`, 0413), não
+ * em variável de ambiente — a escolha é da empresa, e o servidor não pode
+ * mandar nela. É a mesma doutrina do provedor personalizado de texto.
+ */
+export const PROVEDORES_DE_VOZ = [
+  {
+    id: "elevenlabs",
+    rotulo: "ElevenLabs (voz)",
+    quandoUsar:
+      "A voz do agente: o assistente responde por nota de voz no lugar do texto. Vale a chave da sua conta; se você fala com um proxy ou uma instalação própria da ElevenLabs, informe o endereço.",
+    aceitaEndpointProprio: true,
+    catalogoSincronizavel: false,
+    // A chave da ElevenLabs é restrita por padrão; a tela lista as vozes só
+    // quando a chave tem `voices_read` (o cartão avisa quando não dá).
+    ondePegarAChave: "https://elevenlabs.io/app/settings/api-keys",
+    prefixoDaChave: "sk_...",
+  },
+  {
+    id: "tts-aberto",
+    rotulo: "Voz por endpoint próprio (compatível com OpenAI)",
+    quandoUsar:
+      "Qualquer gateway que fale o /audio/speech da OpenAI — 9Router, LiteLLM, proxy corporativo. Você informa o endereço, a chave e a voz, e o CRM fala por ele.",
+    // Aqui o endereço não é opcional: sem ele não existe provedor. Quem cobra é
+    // `exigeEnderecoNaCredencial`, lido pela rota e pelo diálogo.
+    aceitaEndpointProprio: true,
+    catalogoSincronizavel: true,
+    // Não há portal de chave — quem a emite é o gateway do operador. TLD
+    // reservado a documentação, como no provedor personalizado de texto.
+    ondePegarAChave: "https://docs.example/voz-por-endpoint",
+    prefixoDaChave: "sk-...",
+  },
+] as const satisfies readonly ProvedorSuportado[];
+
+export const IDS_DE_PROVEDOR_DE_VOZ = PROVEDORES_DE_VOZ.map((p) => p.id) as unknown as readonly [
+  (typeof PROVEDORES_DE_VOZ)[number]["id"],
+  ...(typeof PROVEDORES_DE_VOZ)[number]["id"][],
+];
+
+export const PROVEDOR_DE_VOZ_POR_ID: ReadonlyMap<string, ProvedorSuportado> = new Map(
+  PROVEDORES_DE_VOZ.map((p) => [p.id, p]),
+);
+
+/** Este id é um provedor de VOZ (e não de texto nem o Jev)? */
+export function ehProvedorDeVoz(id: string): boolean {
+  return PROVEDOR_DE_VOZ_POR_ID.has(id);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// O SERVIÇO de cada provedor e o que a CREDENCIAL dele precisa — DUAS perguntas
+// que a rota, o diálogo e o leitor de credencial fazem sobre o mesmo id, e cujas
+// respostas têm de vir de um lugar só (duas réguas para o mesmo fato divergem).
+
+export type ServicoDoProvedor = "texto" | "decisao" | "voz";
+
+/** A que serviço o provedor pertence — derivado das listas, nunca escrito de novo. */
+export function servicoDoProvedor(id: string): ServicoDoProvedor | null {
+  if (PROVEDOR_DE_VOZ_POR_ID.has(id)) return "voz";
+  if (ehProvedorDeDecisao(id)) return "decisao";
+  if (ehProvedorSuportado(id)) return "texto";
+  return null;
+}
+
+/**
+ * A credencial deste provedor ACEITA um endereço próprio? Hoje `custom` (texto)
+ * e os dois de voz. Era um `provider === "custom"` cravado em três lugares.
+ */
+export function aceitaEnderecoNaCredencial(id: string): boolean {
+  if (PROVEDOR_DE_VOZ_POR_ID.get(id)?.aceitaEndpointProprio === true) return true;
+  return PROVEDOR_POR_ID.get(id)?.aceitaEndpointProprio === true;
+}
+
+/**
+ * A credencial deste provedor EXIGE um endereço? Só `tts-aberto`: os demais
+ * provedores — inclusive a ElevenLabs — têm endereço oficial.
+ */
+export function exigeEnderecoNaCredencial(id: string): boolean {
+  return id === "tts-aberto";
+}
+
 /** Tudo o que tem chave cadastrável: a tela de Credenciais e a rota dela. */
-export const PROVEDORES_COM_CHAVE = [...PROVEDORES, ...PROVEDORES_DE_DECISAO] as const;
+export const PROVEDORES_COM_CHAVE = [
+  ...PROVEDORES,
+  ...PROVEDORES_DE_DECISAO,
+  ...PROVEDORES_DE_VOZ,
+] as const;
 
 /**
  * O LOGIN POR ASSINATURA — por que esta entrada fica em `PROVEDORES_COM_CHAVE`
  * embora não se pareça com uma chave.
  *
- * `PROVEDORES_COM_CHAVE` é a união das duas listas (`tests/unit/provedores-de-decisao-catraca.test.ts`
- * cobra que seja exatamente elas), e a assinatura entrou em `PROVEDORES`
+ * `PROVEDORES_COM_CHAVE` é a união das TRÊS listas (`tests/unit/provedores-de-decisao-catraca.test.ts`
+ * cobra que seja exatamente elas — e que nenhum provedor de voz ou de decisão
+ * apareça em `PROVEDORES`), e a assinatura entrou em `PROVEDORES`
  * porque o seletor do agente, o padrão da empresa e o validador de escrita
  * derivam de lá: é a lista de quem CONVERSA, e este provedor conversa.
  *

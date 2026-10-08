@@ -13,7 +13,9 @@ describe("fotos do catálogo", () => {
     // O teto é medido antes de CADA foto (`restantes`), depois do texto — que,
     // acima do teto de legenda, sai à parte e também gasta o teto. O
     // comportamento é provado em lib/agent-engine/agent/fotos-do-produto.test.ts.
-    const envio = turno.slice(turno.indexOf("return enviarComFotos("));
+    // `return await` desde a nota de voz (5870e0953): o `send` virou async e
+    // espera o envio; o teto medido antes de cada foto (`restantes`) segue no lugar.
+    const envio = turno.slice(turno.indexOf("return await enviarComFotos("));
     expect(envio.slice(0, envio.indexOf("});"))).toMatch(/restantes:\s*\(\)\s*=>\s*maxSendsPerTurn\s*-\s*seq/);
     expect(recorte).not.toMatch(/fotosDoProduto\.slice\(0,/);
   });

@@ -65,3 +65,17 @@ mesmo endereço.
 
 Os quatro provedores nativos não mudam nada: continua valendo para eles o que
 sempre valeu.
+
+## Voz pelo mesmo endereço
+
+O mesmo gateway pode servir a **voz** do agente, e não só o texto. Em
+**IA › Credenciais** o serviço **Voz** oferece o provedor **Voz por endpoint
+próprio (compatível com OpenAI)**: você informa o endereço, a chave e a voz, e o
+CRM fala pelo `/audio/speech` daquele endpoint — o mesmo contrato que o gateway
+já expõe para a OpenAI. É o caminho de quem roteia tudo (9Router, LiteLLM, proxy
+corporativo) por uma chave só.
+
+A chave da voz é uma credencial **separada** da de texto, ainda que more no mesmo
+endereço: o agente escolhe qual usar em **IA › Agentes**, no campo de voz — junto
+do provedor, da voz, do modelo e do **modo** que decide quando ele fala em vez de
+escrever. Sem chave de voz, a resposta sai em texto e nada mais muda.

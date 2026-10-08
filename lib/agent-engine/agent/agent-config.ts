@@ -101,6 +101,21 @@ export interface PublishedAgentConfig {
   /** criadores (p/ mint do token efêmero de audit — padrão do runtime nativo). */
   versionCreatedBy: string | null;
   agentCreatedBy: string | null;
+  /**
+   * A VOZ DO AGENTE (migration 0591). `voiceMode` decide QUANDO falar em vez de
+   * escrever (`nunca`/`sempre`/`quando_cliente_fala`/`decidir`); `null` = o
+   * comportamento de ANTES desta coluna. Os outros quatro são a escolha do
+   * provedor/chave/voz/modelo — `null` em cada um cai no degrau seguinte da
+   * escada (`lib/tts/resolver.ts`).
+   *
+   * Todos opcionais: um clone atrás da 0591 não tem as colunas, e a direção
+   * segura é "sem voz" — o mesmo default que a coluna tem.
+   */
+  voiceMode?: string | null;
+  voiceProvider?: string | null;
+  voiceCredentialId?: string | null;
+  voiceId?: string | null;
+  voiceModel?: string | null;
 }
 
 interface Row {
@@ -137,6 +152,11 @@ interface Row {
   trigger_config: unknown;
   version_created_by: string | null;
   agent_created_by: string | null;
+  voice_mode: string | null;
+  voice_provider: string | null;
+  voice_credential_id: string | null;
+  voice_id: string | null;
+  voice_model: string | null;
 }
 
 const SELECT_AGENT_CONFIG_COLUMNS = `a.operation_mode,a.paused_at,a.operation_revision::text,a.id as agent_id,
@@ -168,7 +188,12 @@ const SELECT_AGENT_CONFIG_COLUMNS = `a.operation_mode,a.paused_at,a.operation_re
             v.knowledge_source_ids,
             v.trigger_config,
             v.created_by as version_created_by,
-            a.created_by as agent_created_by`;
+            a.created_by as agent_created_by,
+            v.voice_mode,
+            v.voice_provider,
+            v.voice_credential_id,
+            v.voice_id,
+            v.voice_model`;
 
 /** Mapeamento Row (snake_case do banco) → PublishedAgentConfig, compartilhado
  * pelas duas variantes de loader (por channel_session e por agent id). */
@@ -238,6 +263,13 @@ function mapAgentConfigRow(r: Row): PublishedAgentConfig {
     avisoForaDoHorario: lerTextoDoAvisoForaDoHorario(r.trigger_config),
     versionCreatedBy: r.version_created_by,
     agentCreatedBy: r.agent_created_by,
+    // `?? null` cobre o clone atrás da 0591: a coluna ausente vem undefined, e a
+    // direção segura é "sem voz". Nenhum agente publicado muda de comportamento.
+    voiceMode: r.voice_mode ?? null,
+    voiceProvider: r.voice_provider ?? null,
+    voiceCredentialId: r.voice_credential_id ?? null,
+    voiceId: r.voice_id ?? null,
+    voiceModel: r.voice_model ?? null,
   };
 }
 

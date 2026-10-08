@@ -896,6 +896,16 @@ const HOSTS_DECLARADOS: Record<string, EntradaDeHost> = {
     motivo:
       "endpoint da Requesty (roteador OpenAI-compatível) no registry de produção, no runtime de ensaio, no validador de chave e na prova de crédito. É o destino do request, não texto de interface.",
   },
+  "api.elevenlabs.io": {
+    categoria: "FORNECEDOR",
+    motivo:
+      "endpoint oficial da ElevenLabs, o provedor de voz nativo do agente (`lib/tts/elevenlabs.ts` sintetiza a nota de voz; `lib/ai/provider-validators.ts` prova a chave por `GET /user`). É o destino do request, com a chave da PRÓPRIA organização — e a credencial aceita um endereço próprio, então quem fala por proxy troca o destino sem tocar nesta entrada. Mesma razão das outras entradas de FORNECEDOR.",
+  },
+  "elevenlabs.io": {
+    categoria: "CONSOLE",
+    motivo:
+      "painel onde o usuário gera a PRÓPRIA chave da ElevenLabs (`ondePegarAChave` de PROVEDORES_DE_VOZ em lib/ai/pontos/provedores.ts). Endereço do fornecedor, não nosso — mandar para outro lugar seria pior.",
+  },
   "generativelanguage.googleapis.com": {
     categoria: "FORNECEDOR",
     motivo:
@@ -1181,6 +1191,10 @@ describe("catraca de host de terceiro no código que embarca", () => {
       // CONSOLE — o link "Onde pegar a chave" da tela de Credenciais.
       "console.typesafe.ai",
       "deskcomm.app",
+      // Decisão escrita: é o painel de chaves da ElevenLabs, o mesmo caso dos
+      // outros CONSOLE — o link "Onde pegar a chave" da tela de Credenciais
+      // para o provedor de voz nativo.
+      "elevenlabs.io",
       // Link que abre o pino que o CLIENTE mandou (`lib/messaging/localizacao.ts`).
       // Mesma natureza do `wa.me` abaixo: o produto não fala com o host, quem
       // abre é o celular do atendente. Crescimento escrito, como a regra pede.

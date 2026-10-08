@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { caminhoDoAudio, esperaDoAudio, prepararAudioDoTurno } from "./audio-do-turno";
-import type { ResultadoDaSintese } from "@/lib/tts/elevenlabs";
+import type { ResultadoDaSintese } from "@/lib/tts";
 
 const ORG = "org-1";
 const CONVERSA = "conv-1";

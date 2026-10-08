@@ -81,6 +81,9 @@ describe("AddCredentialDialog — ajuda ao escolher", () => {
 
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith("/api/v1/ai/credentials/test", {
+        // Desde a voz (#0591) o corpo leva o provedor: a rota escolhe o
+        // validador por ele (custom, elevenlabs, tts-aberto).
+        provider: "custom",
         base_url: "https://gw.exemplo/v1",
         api_key: "sk-gateway-0123456789",
       }),

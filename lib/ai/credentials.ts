@@ -9,17 +9,22 @@
 import { byteaToBuffer, decryptKey } from "@/lib/crypto/aes_gcm";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-import { PROVEDOR_POR_ASSINATURA, type ProvedorComChave } from "@/lib/ai/pontos/provedores";
+import {
+  aceitaEnderecoNaCredencial,
+  PROVEDOR_POR_ASSINATURA,
+  type ProvedorComChave,
+} from "@/lib/ai/pontos/provedores";
 
 export interface LoadedCredential {
   apiKey: string;
   provider: ProvedorComChave;
   label: string;
   /**
-   * O endereço da API quando a credencial É de provedor personalizado (#1642);
-   * `null` nos nativos, cujo endpoint é intrínseco. Lido numa segunda consulta
-   * e só para `custom`, para que uma clone sem a migration 0413 continue
-   * carregando as quatro chave nativas que já carrega hoje.
+   * O endereço da API quando a credencial ACEITA um (`aceitaEnderecoNaCredencial`):
+   * o provedor personalizado de texto (#1642) e os de voz. `null` nos nativos,
+   * cujo endpoint é intrínseco. Lido numa segunda consulta e só para quem aceita,
+   * para que um clone sem a migration 0413 continue carregando as chaves nativas
+   * que já carrega hoje.
    */
   baseUrl: string | null;
 }
@@ -117,7 +122,11 @@ export async function loadCredential(
   }
 
   let baseUrl: string | null = null;
-  if (data.provider === "custom") {
+  // Provedor que ACEITA endereço próprio — o personalizado de texto (#1642) e os
+  // de VOZ (proxy da ElevenLabs, gateway compatível). A régua é a mesma que a
+  // rota de cadastro usa (`aceitaEnderecoNaCredencial`), para o que se grava e o
+  // que se lê não divergirem.
+  if (aceitaEnderecoNaCredencial(data.provider)) {
     const { data: endereco } = await admin
       .from("ai_provider_credentials")
       .select("base_url")
@@ -125,7 +134,7 @@ export async function loadCredential(
       .eq("organization_id", organizationId)
       .maybeSingle();
     // Coluna ausente (clone atrás da 0413) devolve `error`, não lança: fica
-    // `null` e `buildModel` recusa a chamada dizendo qual endereço falta.
+    // `null` e o adaptador recusa a chamada dizendo qual endereço falta.
     baseUrl = typeof endereco?.base_url === "string" ? endereco.base_url : null;
   }
 

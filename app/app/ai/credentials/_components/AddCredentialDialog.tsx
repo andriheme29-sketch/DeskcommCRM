@@ -28,7 +28,13 @@ import {
 import { apiClient } from "@/lib/api/client";
 import { showApiError } from "@/components/feedback/ApiErrorToast";
 import { credentialsListQueryKey, type CredentialRow } from "@/hooks/ai/useCredentials";
-import { IDS_COM_CHAVE, PROVEDORES_COM_CHAVE, type ProvedorComChave } from "@/lib/ai/pontos/provedores";
+import {
+  aceitaEnderecoNaCredencial,
+  exigeEnderecoNaCredencial,
+  IDS_COM_CHAVE,
+  PROVEDORES_COM_CHAVE,
+  type ProvedorComChave,
+} from "@/lib/ai/pontos/provedores";
 import { descreverErroDeValidacao } from "@/lib/ai/credenciais/erro-de-validacao";
 import { useT } from "@/hooks/i18n/useT";
 
@@ -94,7 +100,9 @@ export function AddCredentialDialog({ open, onOpenChange, providerInicial = "ant
     e.preventDefault();
     setErrors({});
 
-    if (provider === "custom" && !/^https?:\/\/\S+$/.test(baseUrl.trim())) {
+    const temEndereco = aceitaEnderecoNaCredencial(provider);
+    const enderecoObrigatorio = exigeEnderecoNaCredencial(provider);
+    if ((enderecoObrigatorio || (temEndereco && baseUrl.trim() !== "")) && !/^https?:\/\/\S+$/.test(baseUrl.trim())) {
       setErrors({
         base_url: t("Informe o endereço (base URL) começando com http:// ou https://."),
       });
@@ -117,11 +125,12 @@ export function AddCredentialDialog({ open, onOpenChange, providerInicial = "ant
     // salvar seria prometer uma integração que ninguém viu funcionar. Os
     // nativos passam por aqui sem nada — o deles é intrínseco e já é provado
     // pela validação em segundo plano.
-    if (provider === "custom") {
+    if (aceitaEnderecoNaCredencial(provider)) {
       setConexao(null);
       const testando = toast.loading(t("Testando a conexão com o provedor…"));
       try {
         const teste = await apiClient.post<{ data: TestResponse }>("/api/v1/ai/credentials/test", {
+          provider,
           base_url: baseUrl.trim(),
           api_key: apiKey,
         });
@@ -224,7 +233,7 @@ export function AddCredentialDialog({ open, onOpenChange, providerInicial = "ant
             )}
           </div>
 
-          {provider === "custom" && (
+          {aceitaEnderecoNaCredencial(provider) && (
             <div className="space-y-2">
               <Label htmlFor="cred-base-url">{t("Endereço (base URL)")}</Label>
               <Input
@@ -236,7 +245,7 @@ export function AddCredentialDialog({ open, onOpenChange, providerInicial = "ant
                 }}
                 placeholder={t("Obrigatório — ex.: https://seu-gateway.example/v1")}
                 autoComplete="off"
-                required
+                required={exigeEnderecoNaCredencial(provider)}
               />
               {errors.base_url && <p className="text-xs text-destructive">{errors.base_url}</p>}
               {conexao && !conexao.ok && (
@@ -274,10 +283,11 @@ export function AddCredentialDialog({ open, onOpenChange, providerInicial = "ant
           <div className="space-y-2">
             <div className="flex items-baseline justify-between">
               <Label htmlFor="cred-key">{t("Chave")}</Label>
-              {/* Provedor personalizado não tem portal de chave: quem emite é o
-                  gateway do próprio operador. O link sumiria com um endereço que
-                  não leva a lugar nenhum. */}
-              {provider !== "custom" && (
+              {/* Provedor sem portal de chave: o personalizado de texto e o de
+                  voz aberta têm a chave emitida pelo gateway do próprio
+                  operador, e o link sumiria com um endereço que não leva a
+                  lugar nenhum. */}
+              {provedor.ondePegarAChave.startsWith("https://docs.example") === false && (
                 <a
                   className="text-xs underline underline-offset-4"
                   href={provedor.ondePegarAChave}

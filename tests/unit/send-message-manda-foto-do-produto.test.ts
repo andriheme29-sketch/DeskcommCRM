@@ -43,7 +43,9 @@ describe("send_message leva a foto do produto", () => {
   });
 
   it("a foto sai de DENTRO do `send` do guardrail, com o corpo que a cadeia aprovou", () => {
-    const send = corpoDoSend.slice(corpoDoSend.indexOf("send: (finalBody: string) =>"));
+    // `async` desde a nota de voz (5870e0953): o `send` passou a esperar a
+    // síntese do áudio antes de devolver — a fiação da foto não mudou.
+    const send = corpoDoSend.slice(corpoDoSend.indexOf("send: async (finalBody: string) =>"));
     expect(send).toContain("enviarComFotos(finalBody, fotosDoProduto,");
   });
 });

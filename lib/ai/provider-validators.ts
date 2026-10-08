@@ -361,6 +361,79 @@ export async function validateCustomKey(
 }
 
 /**
+ * A chave da ElevenLabs (voz) — `GET {base}/user` com o cabeçalho `xi-api-key`.
+ *
+ * ⚠️ NÃO é `/voices`, e a escolha é deliberada: uma chave RESTRITA a síntese
+ * (que é o caso comum — e o desta operação) responde 401 em `/voices`, porque
+ * lhe falta `voices_read`. Validar por lá reprovaria uma chave que fala
+ * perfeitamente. `/user` prova o mesmo (autenticação viva) sem exigir escopo de
+ * catálogo.
+ *
+ * A régua anti-SSRF vale igual à do provedor personalizado: o endereço é escolha
+ * de uma ORGANIZAÇÃO e quem chama é o servidor, então um proxy da ElevenLabs
+ * apontando para a rede interna é recusado.
+ *
+ * Passa pelo MESMO `baseUrl` opcional dos compatíveis: sem ele, o endpoint
+ * oficial (`api.elevenlabs.io/v1`). A chave nunca é logada — só o código.
+ */
+export async function validateElevenLabsKey(
+  apiKey: string,
+  baseUrl?: string,
+): Promise<ValidationResult> {
+  return validarEndpointCompativel(apiKey, baseUrl, "https://api.elevenlabs.io/v1", (base) =>
+    timedFetch(
+      `${base}/user`,
+      { method: "GET", headers: { "xi-api-key": apiKey }, redirect: "manual" },
+      TIMEOUT_MS_CUSTOM,
+    ),
+  );
+}
+
+/**
+ * A chave do provedor de voz ABERTO (`tts-aberto`): qualquer gateway que fale o
+ * `/audio/speech` da OpenAI. Sem endereço não há provedor — e é por isso que a
+ * rota de cadastro o exige. A prova é `GET {base}/models`, a mesma dos outros
+ * OpenAI-compatíveis.
+ */
+export async function validateVozAbertaKey(
+  apiKey: string,
+  baseUrl?: string,
+): Promise<ValidationResult> {
+  return validateCustomKey(apiKey, baseUrl);
+}
+
+/**
+ * O miolo compartilhado de validação de um endpoint compatível: tira a barra
+ * final, recusa endereço malformado e o que fura a régua anti-SSRF, e devolve o
+ * desfecho de rede sem lançar. Extraído para os provedores de voz não repetirem
+ * (e não divergirem de) `validateCustomKey`.
+ */
+async function validarEndpointCompativel(
+  _apiKey: string,
+  baseUrl: string | undefined,
+  padrao: string,
+  provar: (base: string) => Promise<Response>,
+): Promise<ValidationResult> {
+  const base = (baseUrl ?? "").trim().replace(/\/+$/, "") || padrao;
+  if (!/^https?:\/\//i.test(base)) return { ok: false, error: "base_url_invalida" };
+  const recusa = await motivoDaRecusaDeDestino(base, "organizacao");
+  if (recusa) return { ok: false, error: recusa };
+  try {
+    const res = await provar(base);
+    if (res.status >= 300 && res.status < 400) {
+      return { ok: false, error: "unsafe_url:redirect_not_followed" };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, error: "auth_failed_401" };
+    }
+    if (!res.ok) return { ok: false, error: `provider_status_${res.status}` };
+    return { ok: true, models: [] };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.name : "network_error" };
+  }
+}
+
+/**
  * Valida a CHAVE de qualquer natureza — de quem conversa E de quem só decide (o
  * Jev). Chave é chave: as duas se cadastram na mesma tela.
  *
@@ -392,6 +465,10 @@ export function validateProviderKey(
       return validateRequestyKey(apiKey);
     case "custom":
       return validateCustomKey(apiKey, baseUrl);
+    case "elevenlabs":
+      return validateElevenLabsKey(apiKey, baseUrl);
+    case "tts-aberto":
+      return validateVozAbertaKey(apiKey, baseUrl);
     case "typesafe":
       return validateTypeSafeKey(apiKey);
     case PROVEDOR_POR_ASSINATURA:

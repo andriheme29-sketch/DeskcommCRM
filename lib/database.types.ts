@@ -1845,6 +1845,11 @@ export type Database = {
           trigger_config: Json
           version_number: number
           video_frames_enabled: boolean
+          voice_mode: string | null
+          voice_provider: string | null
+          voice_credential_id: string | null
+          voice_id: string | null
+          voice_model: string | null
         }
         Insert: {
           provisioning_origin?: string | null
@@ -1884,6 +1889,11 @@ export type Database = {
           trigger_config?: Json
           version_number: number
           video_frames_enabled?: boolean
+          voice_mode?: string | null
+          voice_provider?: string | null
+          voice_credential_id?: string | null
+          voice_id?: string | null
+          voice_model?: string | null
         }
         Update: {
           provisioning_origin?: string | null
@@ -1923,6 +1933,11 @@ export type Database = {
           trigger_config?: Json
           version_number?: number
           video_frames_enabled?: boolean
+          voice_mode?: string | null
+          voice_provider?: string | null
+          voice_credential_id?: string | null
+          voice_id?: string | null
+          voice_model?: string | null
         }
         Relationships: [
           {

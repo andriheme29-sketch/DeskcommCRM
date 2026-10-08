@@ -6,6 +6,7 @@ import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
 import { requireSupportWrite } from "@/lib/impersonate/support";
 import { validateProviderKey } from "@/lib/ai/provider-validators";
+import { IDS_DE_PROVEDOR_DE_VOZ } from "@/lib/ai/pontos/provedores";
 import { traduzir } from "@/lib/i18n/dicionario";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,12 @@ export const dynamic = "force-dynamic";
  * o provedor devolveu (que poderia repetir a credencial).
  */
 const testSchema = z.object({
-  base_url: z.string().trim().min(1).max(500),
+  // `custom` por padrão: o corpo antigo (sem `provider`) continua valendo — é o
+  // que a tela do provedor personalizado mandava antes desta generalização.
+  provider: z.enum(IDS_DE_PROVEDOR_DE_VOZ).or(z.literal("custom")).default("custom"),
+  // Endereço opcional: o custom o exige, o `tts-aberto` também, e a ElevenLabs
+  // tem oficial. Quem cobra é a própria validação, com código de erro próprio.
+  base_url: z.string().trim().max(500).optional(),
   api_key: z.string().trim().min(8).max(2048),
 });
 
@@ -53,7 +59,11 @@ export async function POST(req: NextRequest): Promise<Response> {
     });
   }
 
-  const resultado = await validateProviderKey("custom", parsed.data.api_key, parsed.data.base_url);
+  const resultado = await validateProviderKey(
+    parsed.data.provider,
+    parsed.data.api_key,
+    parsed.data.base_url,
+  );
 
   return ok(
     resultado.ok

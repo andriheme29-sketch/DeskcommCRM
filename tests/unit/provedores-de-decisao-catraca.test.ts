@@ -24,12 +24,14 @@ import { createDefaultRegistry } from "@/lib/agent-engine/edge/llm/providers";
 import { PROVIDERS, versionCreateSchema } from "@/lib/ai/agents/validation";
 import {
   ehProvedorDeDecisao,
+  ehProvedorDeVoz,
   ehProvedorSuportado,
   IDS_COM_CHAVE,
   IDS_DE_PROVEDOR,
   IDS_DE_PROVEDOR_DE_DECISAO,
   PROVEDORES,
   PROVEDORES_DE_DECISAO,
+  PROVEDORES_DE_VOZ,
 } from "@/lib/ai/pontos/provedores";
 import { buildModel } from "@/lib/ai/runtime/agent";
 import { POST as reconciliarAgente } from "@/app/api/v1/ai/agents/[id]/reconcile/route";
@@ -54,6 +56,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 }));
 
 const DECISAO = PROVEDORES_DE_DECISAO.map((p) => p.id);
+const VOZ = PROVEDORES_DE_VOZ.map((p) => p.id);
 
 function reconciliar(provider: string) {
   return reconciliarAgente(
@@ -80,10 +83,14 @@ describe("o Jev está declarado como provedor de decisão (controle positivo)", 
     expect(ehProvedorDeDecisao("anthropic")).toBe(false);
   });
 
-  it("a união é exatamente as duas listas, sem sobreposição", () => {
+  it("a união é exatamente as três listas, sem sobreposição", () => {
     const linguagem = PROVEDORES.map((p) => p.id as string);
     expect(DECISAO.filter((id) => linguagem.includes(id))).toEqual([]);
-    expect([...IDS_COM_CHAVE].sort()).toEqual([...linguagem, ...DECISAO].sort());
+    // Voz também não se sobrepõe a texto nem a decisão: um id que aparecesse em
+    // duas listas seria oferecido como cérebro de conversa por uma delas.
+    expect(VOZ.filter((id) => linguagem.includes(id))).toEqual([]);
+    expect(VOZ.filter((id) => (DECISAO as string[]).includes(id))).toEqual([]);
+    expect([...IDS_COM_CHAVE].sort()).toEqual([...linguagem, ...DECISAO, ...VOZ].sort());
   });
 });
 
@@ -123,9 +130,48 @@ describe.each(DECISAO)("%s nunca é modelo de conversa", (id) => {
   });
 });
 
+describe("a voz também não vira modelo de conversa", () => {
+  it("os provedores de voz existem, e a união os inclui", () => {
+    expect(VOZ.length).toBeGreaterThan(0);
+    expect(VOZ).toContain("elevenlabs");
+    for (const id of VOZ) expect(ehProvedorDeVoz(id)).toBe(true);
+    expect(ehProvedorDeVoz("anthropic")).toBe(false);
+  });
+
+  it.each(VOZ)("%s nunca é modelo de conversa nem provedor do Jev", (id) => {
+    expect(PROVEDORES.map((p) => p.id as string)).not.toContain(id);
+    expect([...IDS_DE_PROVEDOR] as string[]).not.toContain(id);
+    // O gate do PUT/PATCH de provedores e da rota de catálogo de modelos: um
+    // provedor de VOZ ali viraria "cérebro do atendimento" na tela.
+    expect(ehProvedorSuportado(id)).toBe(false);
+    expect(ehProvedorDeDecisao(id)).toBe(false);
+  });
+
+  it("o registry e o runtime de ensaio os recusam", () => {
+    for (const id of VOZ) {
+      expect(createDefaultRegistry()[id]).toBeUndefined();
+      expect(() => buildModel(id, "k", "tts-1")).toThrow(/unsupported_provider/);
+    }
+  });
+
+  it("o schema de versão de agente os recusa como provedor de CONVERSA", () => {
+    for (const id of VOZ) {
+      expect([...PROVIDERS] as string[]).not.toContain(id);
+      const r = versionCreateSchema.safeParse({
+        system_prompt: "Você é um atendente útil e cordial.",
+        provider: id,
+        model: "tts-1",
+        credential_id: null,
+        channel_session_id: null,
+      });
+      expect(r.success, id).toBe(false);
+    }
+  });
+});
+
 describe("só as superfícies de CHAVE pedem a união", () => {
   const SIMBOLOS_DA_UNIAO =
-    /\b(PROVEDORES_COM_CHAVE|IDS_COM_CHAVE|PROVEDORES_DE_DECISAO|IDS_DE_PROVEDOR_DE_DECISAO|ProvedorComChave|ehProvedorDeDecisao)\b/;
+    /\b(PROVEDORES_COM_CHAVE|IDS_COM_CHAVE|PROVEDORES_DE_DECISAO|IDS_DE_PROVEDOR_DE_DECISAO|PROVEDORES_DE_VOZ|IDS_DE_PROVEDOR_DE_VOZ|ProvedorComChave|ehProvedorDeDecisao|ehProvedorDeVoz)\b/;
 
   /**
    * Cada linha é uma decisão escrita: este arquivo lida com CHAVE (cadastrar,
@@ -144,6 +190,24 @@ describe("só as superfícies de CHAVE pedem a união", () => {
     "lib/ai/credenciais/guardar.ts", // cifra, grava e valida a chave de qualquer natureza
     // decifra a credencial pelo id; o runtime que a usa recusa o Jev em buildModel
     "lib/ai/credentials.ts",
+    // Compara os ADAPTADORES de voz com a lista que a tela oferece
+    // (`IDS_DE_PROVEDOR_DE_VOZ`) — lida com CHAVE de voz, nunca escolhe modelo
+    // de conversa. Um provedor de voz não pode virar cérebro do atendimento.
+    "lib/tts/index.ts",
+    // Valida o `voice_provider` do agente contra IDS_DE_PROVEDOR_DE_VOZ — a lista
+    // de CONVERSA (`IDS_DE_PROVEDOR`) entra ali em separado e continua sendo a
+    // única fonte do `provider`/`model` do turno. Voz nunca vira cérebro.
+    "lib/ai/agents/validation.ts",
+    // A escada da voz: resolve o provedor de voz da credencial/agente. Lida só
+    // com chave de voz, nunca escolhe modelo de conversa.
+    "lib/tts/resolver.ts",
+    // A rota que testa a conexão antes de salvar: aceita o `provider` de voz
+    // (e `custom`) para escolher o validador. Lida só com chave.
+    "app/api/v1/ai/credentials/test/route.ts",
+    // O seletor de VOZ do agente: escolhe provedor de voz e a credencial de voz.
+    // O cérebro do atendimento é outro campo (`PROVEDORES`), intocado — a voz
+    // jamais vira modelo de conversa.
+    "app/app/ai/agents/[id]/_components/VozDoAgente.tsx",
     "app/app/ai/credentials/_components/AddCredentialDialog.tsx",
     "app/app/ai/credentials/_components/CredentialCard.tsx",
     "app/app/ai/credentials/_components/CredentialsList.tsx",

@@ -11,7 +11,8 @@ import { z } from "zod";
 import { ehToolIdRemoto } from "@/lib/mcp/servidor-externo/ids";
 import { VALID_TOOL_IDS } from "@/lib/mcp/tools/catalog";
 import { TETO_TOOLS_POR_AGENTE } from "@/lib/mcp/tools/selecao-por-pacote";
-import { IDS_DE_PROVEDOR } from "@/lib/ai/pontos/provedores";
+import { IDS_DE_PROVEDOR, IDS_DE_PROVEDOR_DE_VOZ } from "@/lib/ai/pontos/provedores";
+import { MODOS_DE_VOZ } from "@/lib/agent-engine/agent/voz-do-turno";
 
 /**
  * Derivado de `lib/ai/pontos/provedores.ts` (a lista única desde a 0127). Como
@@ -243,6 +244,20 @@ const versionShapeSchema = z
      * organização é o servidor.
      */
     knowledge_source_ids: z.array(z.string().uuid()).default([]),
+    // ── A VOZ DO AGENTE (migration 0591) ─────────────────────────────────────
+    // `voice_mode` decide QUANDO falar em vez de escrever. `null` é o estado
+    // "como antes desta tela" — retrocompatível: um payload antigo, que não
+    // conhece o campo, cai em `null` e o agente segue com o comportamento que
+    // já tinha (o modelo manda pelo prompt). A tela oferece os quatro modos;
+    // quem nunca mexeu fica em `null`.
+    voice_mode: z.enum(MODOS_DE_VOZ).nullable().default(null),
+    // `.nullable()` e não opcional: `null` SIGNIFICA "herda o degrau seguinte da
+    // escada" (`lib/tts/resolver.ts`) — omitir seria indistinguível de "ainda
+    // não decidi".
+    voice_provider: z.enum(IDS_DE_PROVEDOR_DE_VOZ).nullable().default(null),
+    voice_credential_id: UUID.nullable().default(null),
+    voice_id: z.string().trim().max(120).nullable().default(null),
+    voice_model: z.string().trim().max(120).nullable().default(null),
   })
   .strict();
 
@@ -271,6 +286,13 @@ export const versionPatchSchema = versionShapeSchema
     operator_tool_ids: versionShapeSchema.shape.operator_tool_ids.removeDefault(),
     pipeline_ids: versionShapeSchema.shape.pipeline_ids.removeDefault(),
     knowledge_source_ids: versionShapeSchema.shape.knowledge_source_ids.removeDefault(),
+    // Sem `.removeDefault()`, o PATCH reintroduziria `null` e apagaria a escolha
+    // de voz do agente a cada edição parcial (o mesmo defeito dos campos acima).
+    voice_mode: versionShapeSchema.shape.voice_mode.removeDefault(),
+    voice_provider: versionShapeSchema.shape.voice_provider.removeDefault(),
+    voice_credential_id: versionShapeSchema.shape.voice_credential_id.removeDefault(),
+    voice_id: versionShapeSchema.shape.voice_id.removeDefault(),
+    voice_model: versionShapeSchema.shape.voice_model.removeDefault(),
   })
   .partial();
 

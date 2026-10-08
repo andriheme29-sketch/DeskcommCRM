@@ -40,6 +40,7 @@ import { PROVEDOR_POR_ASSINATURA, PROVEDORES } from "@/lib/ai/pontos/provedores"
 
 import { ModelPicker, useModelMeta } from "./ModelPicker";
 import { CHAVE_DA_INSTALACAO, CredentialPicker, STATUS_LABEL, findCredential } from "./CredentialPicker";
+import { VozDoAgente } from "./VozDoAgente";
 import { rotuloDoEstadoDoCanal } from "@/lib/channels/estado";
 import { bloqueioDePublicacao } from "@/lib/ai/agents/bloqueio-de-publicacao";
 import { mesmoRascunho } from "@/lib/ai/agents/mesmo-rascunho";
@@ -201,6 +202,14 @@ interface FormState {
   operator_tool_ids: string[];
   pipeline_ids: string[];
   knowledge_source_ids: string[];
+  // A VOZ do agente (0591).
+  /** "" = modo padrão (o comportamento de antes). Um dos MODOS_DE_VOZ quando escolhido. */
+  voice_mode: string;
+  /** "" = sem escolha; a escada da organização decide. */
+  voice_provider: string;
+  voice_credential_id: string;
+  voice_id: string;
+  voice_model: string;
 }
 
 interface FollowupValue {
@@ -318,6 +327,13 @@ export function buildState(args: {
     pipeline_ids: version?.pipeline_ids ?? [],
     // `?? []` = nenhum material. Mesma direção segura: agir de menos.
     knowledge_source_ids: version?.knowledge_source_ids ?? [],
+    // A voz: o form usa "" onde o banco usa null (Select controlado não aceita
+    // null); `toVersionPayload` traduz de volta num ponto só.
+    voice_mode: version?.voice_mode ?? "",
+    voice_provider: version?.voice_provider ?? "",
+    voice_credential_id: version?.voice_credential_id ?? "",
+    voice_id: version?.voice_id ?? "",
+    voice_model: version?.voice_model ?? "",
   };
 }
 
@@ -374,6 +390,12 @@ function toVersionPayload(s: FormState) {
     operator_tool_ids: s.operator_tool_ids,
     pipeline_ids: s.pipeline_ids,
     knowledge_source_ids: s.knowledge_source_ids,
+    // A voz: "" na tela é null no contrato (não escolhido / modo padrão).
+    voice_mode: s.voice_mode === "" ? null : s.voice_mode,
+    voice_provider: s.voice_provider === "" ? null : s.voice_provider,
+    voice_credential_id: s.voice_credential_id === "" ? null : s.voice_credential_id,
+    voice_id: s.voice_id.trim() === "" ? null : s.voice_id.trim(),
+    voice_model: s.voice_model.trim() === "" ? null : s.voice_model.trim(),
   };
 }
 
@@ -944,6 +966,17 @@ export function AgentForm(props: Props) {
                 {t(". Publish bloqueado até validar.")}
               </p>
             ) : null}
+
+            <VozDoAgente
+              voice_mode={form.voice_mode}
+              voice_provider={form.voice_provider}
+              voice_credential_id={form.voice_credential_id}
+              voice_id={form.voice_id}
+              voice_model={form.voice_model}
+              credentials={props.credentials}
+              onChange={(p) => patch(p)}
+              disabled={disabled}
+            />
           </Card>
 
           {/* WhatsApp session */}

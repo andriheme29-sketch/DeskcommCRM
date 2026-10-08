@@ -34,6 +34,12 @@ export interface EscopoDaVersao {
    * assinatura do ChatGPT só com o módulo `login_codex` ligado.
    */
   provider?: string;
+  /**
+   * A credencial de VOZ escolhida no agente (migration 0591). Mesma conferência
+   * de `credential_id`: precisa existir e ser DESTA organização — a FK só garante
+   * que a linha existe. `null` = herda o degrau seguinte da escada.
+   */
+  voice_credential_id?: string | null;
 }
 
 export type ResultadoDoEscopo =
@@ -41,7 +47,12 @@ export type ResultadoDoEscopo =
   | { ok: false; campo: "provider"; ausentes: string[] }
   | {
       ok: false;
-      campo: "pipeline_ids" | "knowledge_source_ids" | "credential_id" | "channel_session_id";
+      campo:
+        | "pipeline_ids"
+        | "knowledge_source_ids"
+        | "credential_id"
+        | "voice_credential_id"
+        | "channel_session_id";
       ausentes: string[];
     };
 
@@ -96,6 +107,7 @@ export async function validarEscopoDaVersao(
   // "não existe" dão a mesma resposta de propósito.
   const referencias = [
     ["credential_id", "ai_provider_credentials", escopo.credential_id],
+    ["voice_credential_id", "ai_provider_credentials", escopo.voice_credential_id],
     ["channel_session_id", "channel_sessions", escopo.channel_session_id],
   ] as const;
   for (const [campo, tabela, id] of referencias) {
@@ -121,6 +133,8 @@ export function mensagemDoEscopo(r: Extract<ResultadoDoEscopo, { ok: false }>): 
       return `Um dos materiais marcados não existe mais, ou foi arquivado (${r.ausentes.length}). Recarregue a página e marque de novo.`;
     case "credential_id":
       return "A credencial escolhida não existe nesta organização. Recarregue a página e escolha de novo.";
+    case "voice_credential_id":
+      return "A credencial de voz escolhida não existe nesta organização. Recarregue a página e escolha de novo.";
     case "channel_session_id":
       return "A conexão escolhida não existe nesta organização. Recarregue a página e escolha de novo.";
     case "provider":

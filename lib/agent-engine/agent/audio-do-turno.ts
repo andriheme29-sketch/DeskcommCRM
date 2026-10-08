@@ -21,7 +21,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { extFromMime } from '@/lib/messaging/media/types';
 
-import type { CodigoDeFalhaDaVoz, ResultadoDaSintese } from '@/lib/tts/elevenlabs';
+import type { CodigoDeFalhaDaVoz, ResultadoDaSintese } from '@/lib/tts';
 
 /** Bucket privado das conversas — o mesmo das fotos e do PDF de proposta. */
 const BUCKET_DA_CONVERSA = 'whatsapp-media';

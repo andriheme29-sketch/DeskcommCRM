@@ -608,7 +608,7 @@ const schema = z.object({
   VAPID_PRIVATE_KEY: z.string().optional().default(""),
 
   /**
-   * VOZ DO AGENTE — TTS do ElevenLabs (`lib/tts/elevenlabs.ts`).
+   * VOZ DO AGENTE — TTS (`lib/tts/`).
    *
    * O consumidor é o WORKER (o turno do agente monta a nota de voz e sobe o
    * arquivo para `whatsapp-media`; ver `lib/agent-engine/env.ts`, que é o schema
@@ -617,7 +617,11 @@ const schema = z.object({
    * justamente por isso que elas ficam declaradas e opcionais, para que um
    * `.env` compartilhado não pareça ter uma variável que o produto ignora.
    *
-   * Vazio = a instalação não fala: `configDaVoz` devolve `null`, o
+   * ⚠️ Desde a 0591 a voz se configura pela TELA (chave em IA › Credenciais,
+   * escolha e MODO por agente), e estas variáveis são o ÚLTIMO degrau da escada
+   * de `lib/tts/resolver.ts` — não a única porta.
+   *
+   * Vazio = a instalação não fala por env: a resolução cai no degrau "nada", o
    * `enviar_como_audio` do `send_message` degrada para texto e nada mais muda.
    * Sem `.url()`/`.min(1)`, pela regra desta casa: este arquivo lança no import,
    * e uma variável de FEATURE não derruba todas as telas.

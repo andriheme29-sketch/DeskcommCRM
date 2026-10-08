@@ -33,7 +33,7 @@ export const DUPLICATE_AGENT_COLUMNS =
  * basta, se o INSERT não a escreve a cópia nasce com o default do banco.
  */
 export const DUPLICATE_VERSION_COLUMNS =
-  "id, organization_id, agent_id, version_number, system_prompt, provider, model, credential_id, tool_ids, trigger_config, channel_session_id, max_steps, token_budget, cost_budget_cents, history_message_window, history_token_window, handoff_keywords, handoff_tool_enabled, proposal_ai_draft_enabled, cases_enabled, split_messages, split_max_chars, followup, operator_enabled, operator_model, operator_tool_ids, status, published_at, superseded_at, created_at, created_by,pipeline_ids,knowledge_source_ids,provisioning_origin,inbound_debounce_ms";
+  "id, organization_id, agent_id, version_number, system_prompt, provider, model, credential_id, tool_ids, trigger_config, channel_session_id, max_steps, token_budget, cost_budget_cents, history_message_window, history_token_window, handoff_keywords, handoff_tool_enabled, proposal_ai_draft_enabled, cases_enabled, split_messages, split_max_chars, followup, operator_enabled, operator_model, operator_tool_ids, status, published_at, superseded_at, created_at, created_by,pipeline_ids,knowledge_source_ids,provisioning_origin,inbound_debounce_ms,voice_mode,voice_provider,voice_credential_id,voice_id,voice_model";
 
 export type DuplicateAgentError =
   | "not_found"
@@ -105,6 +105,14 @@ export function versionPayloadFrom(src: Record<string, unknown>) {
     // nenhum — e o dono descobria isso no primeiro atendimento do clone.
     pipeline_ids: src.pipeline_ids ?? [],
     knowledge_source_ids: src.knowledge_source_ids ?? [],
+    // A VOZ do agente (0591). Duplicar sem isto daria um clone que fala com a
+    // voz padrão, ignorando a que o original escolheu — o mesmo defeito do
+    // escopo logo acima, agora na voz.
+    voice_mode: src.voice_mode,
+    voice_provider: src.voice_provider,
+    voice_credential_id: src.voice_credential_id,
+    voice_id: src.voice_id,
+    voice_model: src.voice_model,
   };
 }
 

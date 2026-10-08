@@ -39,7 +39,7 @@ import { VALID_TOOL_IDS } from "@/lib/mcp/tools";
 const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const VERSION_COLUMNS =
-  "id, organization_id, agent_id, version_number, system_prompt, provider, model, credential_id, tool_ids, trigger_config, channel_session_id, max_steps, token_budget, cost_budget_cents, history_message_window, history_token_window, handoff_keywords, handoff_tool_enabled, proposal_ai_draft_enabled, cases_enabled, split_messages, split_max_chars, followup, operator_enabled, operator_model, operator_tool_ids, status, published_at, superseded_at, created_at, created_by,pipeline_ids,knowledge_source_ids,provisioning_origin,inbound_debounce_ms";
+  "id, organization_id, agent_id, version_number, system_prompt, provider, model, credential_id, tool_ids, trigger_config, channel_session_id, max_steps, token_budget, cost_budget_cents, history_message_window, history_token_window, handoff_keywords, handoff_tool_enabled, proposal_ai_draft_enabled, cases_enabled, split_messages, split_max_chars, followup, operator_enabled, operator_model, operator_tool_ids, status, published_at, superseded_at, created_at, created_by,pipeline_ids,knowledge_source_ids,provisioning_origin,inbound_debounce_ms,voice_mode,voice_provider,voice_credential_id,voice_id,voice_model";
 
 type ActionResult<T = void> =
   | { ok: true; data?: T }
@@ -322,6 +322,11 @@ export async function saveAgentDraftAction(
         operator_tool_ids: v.operator_tool_ids,
         pipeline_ids: v.pipeline_ids,
         knowledge_source_ids: v.knowledge_source_ids,
+        voice_mode: v.voice_mode,
+        voice_provider: v.voice_provider,
+        voice_credential_id: v.voice_credential_id,
+        voice_id: v.voice_id,
+        voice_model: v.voice_model,
         split_messages: v.split_messages,
         split_max_chars: v.split_max_chars,
         inbound_debounce_ms: v.inbound_debounce_ms ?? null,
@@ -553,6 +558,12 @@ export async function revertToVersionAction(
     split_max_chars: number;
     inbound_debounce_ms: number | null;
     followup: unknown;
+    // A voz (0591). Nulas quando a versão de origem nunca a configurou.
+    voice_mode: string | null;
+    voice_provider: string | null;
+    voice_credential_id: string | null;
+    voice_id: string | null;
+    voice_model: string | null;
   };
   const src = source as unknown as SourceRow;
 
@@ -600,6 +611,14 @@ export async function revertToVersionAction(
         // que aquela versão consultava é publicar uma configuração inventada.
         pipeline_ids: src.pipeline_ids,
         knowledge_source_ids: src.knowledge_source_ids ?? [],
+        // O revert leva a voz junto, pelo mesmo motivo do escopo e do acervo:
+        // reverter para uma versão e NÃO voltar a voz dela seria publicar uma
+        // configuração que nunca existiu.
+        voice_mode: src.voice_mode,
+        voice_provider: src.voice_provider,
+        voice_credential_id: src.voice_credential_id,
+        voice_id: src.voice_id,
+        voice_model: src.voice_model,
         split_messages: src.split_messages,
         split_max_chars: src.split_max_chars,
         inbound_debounce_ms: src.inbound_debounce_ms ?? null,
@@ -773,6 +792,11 @@ export async function createMcpAgentAction(
     operator_tool_ids: v.operator_tool_ids,
     pipeline_ids: v.pipeline_ids,
     knowledge_source_ids: v.knowledge_source_ids,
+    voice_mode: v.voice_mode,
+    voice_provider: v.voice_provider,
+    voice_credential_id: v.voice_credential_id,
+    voice_id: v.voice_id,
+    voice_model: v.voice_model,
     status: "draft",
     created_by: authUser.id,
   });

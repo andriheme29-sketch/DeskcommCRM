@@ -85,7 +85,9 @@ import {
   type AudioParaEnvio,
   type SubirAudio,
 } from './audio-do-turno';
-import { configDaVoz, sintetizarVoz, type ConfigDaVoz } from '@/lib/tts/elevenlabs';
+import { sintetizarVoz, type ConfigDaVoz, type ProvedorDeVoz } from '@/lib/tts';
+import { resolverVozDoTurno } from '@/lib/tts/resolver';
+import { decidirModalidadeDeVoz, type ModoDeVoz } from './voz-do-turno';
 import { loadEnv } from '../env';
 import { enqueueJob, rescheduleJob, type JobRow, type Queryable } from '../queue/queue';
 import {
@@ -1287,11 +1289,31 @@ export interface InboundTurnDeps {
  * modelo (argumento da tool) e quem decide o que dizer é o `body` dele.
  */
 export interface VozDoTurno {
-  /** `null` = instalação sem TTS (sem `ELEVENLABS_API_KEY`): o áudio degrada para texto. */
+  /** `null` = instalação sem TTS: o áudio degrada para texto. */
   config: ConfigDaVoz | null;
+  /** Qual adaptador executa (`elevenlabs` ou `tts-aberto`). Ausente = nativo. */
+  provedor?: ProvedorDeVoz;
   fetchImpl: typeof fetch;
   /** Sobe os bytes para a pasta da conversa em `whatsapp-media`. */
   subir: SubirAudio;
+}
+
+/**
+ * O turno disparado por uma NOTA DE VOZ do cliente? Lê o tipo da última
+ * mensagem inbound — o `type` é preenchido só quando a mensagem tem mídia
+ * (`get-lead-context.ts`), e `'audio'` é o vocabulário do canal.
+ *
+ * É o sinal do modo `quando_cliente_fala` e um dos do `decidir`. Barato: o
+ * contexto já está em memória, nenhuma consulta nova.
+ */
+export function mensagemDeAudioDoCliente(
+  messages: readonly { direction: string; type?: string }[],
+): boolean {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m !== undefined && m.direction === 'inbound') return m.type === 'audio';
+  }
+  return false;
 }
 
 /** Checkpoint mais recente do lead — a memória que atravessa sessões. */
@@ -3328,24 +3350,32 @@ async function executarTurnoDoAgente(
         // organização que exige disclosure — o preço de nunca mandar uma voz
         // divergente do que o CRM registrou como dito.
         let audioDaVoz: AudioParaEnvio | null = null;
-        if (enviar_como_audio === true && !preview) {
-          const voz: VozDoTurno =
-            deps.voz ??
-            (() => {
-              const env = loadEnv();
-              return {
-                config: configDaVoz({
-                  ELEVENLABS_API_KEY: env.ELEVENLABS_API_KEY,
-                  ELEVENLABS_VOICE_ID: env.ELEVENLABS_VOICE_ID,
-                  ELEVENLABS_MODEL_ID: env.ELEVENLABS_MODEL_ID,
-                }),
-                fetchImpl: fetch,
-                subir: subirAudioNoStorage(runLog),
-              };
-            })();
+        // Só o modo explícito do agente entra na régua; `null` (o estado "como
+        // antes") deixa o `enviar_como_audio` do modelo mandar sozinho — a
+        // regressão zero de quem já publicou com voz.
+        const decisaoDeVoz =
+          preview || agentConfig?.voiceMode == null
+            ? null
+            : decidirModalidadeDeVoz({
+                modo: agentConfig.voiceMode as ModoDeVoz,
+                pedidoDoModelo: enviar_como_audio === true,
+                clienteMandouAudio: mensagemDeAudioDoCliente(openingContext.context.messages),
+                textoDoCliente: currentInboundText,
+                corpo: body,
+              });
+        // O modelo pediu voz, ou o modo a impôs. Em qualquer dos casos, quem
+        // sintetiza é a `VozDoTurno` injetada — em produção o turno é montado
+        // por quem o chama.
+        const querVoz = decisaoDeVoz === null ? enviar_como_audio === true : decisaoDeVoz.falar;
+        if (querVoz && !preview) {
+          // `deps.voz` é injeção de TESTE (dublês sem rede). Em produção é
+          // `undefined` e a voz sai da escada: a escolha do agente → a credencial
+          // de voz da organização → o `ELEVENLABS_*` da instalação.
+          const voz: VozDoTurno = deps.voz ?? (await montarVozDeProducao());
           const pronta = await prepararAudioDoTurno(
             (texto) =>
               sintetizarVoz(texto, {
+                provedor: voz.provedor,
                 config: voz.config,
                 fetchImpl: voz.fetchImpl,
                 log: runLog,
@@ -3364,6 +3394,43 @@ async function executarTurnoDoAgente(
               detalhe: pronta.message,
             });
           }
+        }
+        // Registra a decisão quando há MODO configurado (a régua da tela) — sem
+        // isto, "o prompt pediu voz e a tela negou" seria invisível para quem opera.
+        if (decisaoDeVoz !== null) {
+          runLog.info('voz do turno decidida pela tela', {
+            falar: decisaoDeVoz.falar,
+            motivo: decisaoDeVoz.motivo,
+            saiu: audioDaVoz !== null,
+          });
+        }
+
+        /** Monta a voz do turno pela escada (`lib/tts/resolver.ts`). Nunca lança. */
+        async function montarVozDeProducao(): Promise<VozDoTurno> {
+          const env = loadEnv();
+          const resolvida = await resolverVozDoTurno(
+            {
+              organizationId: tenantId,
+              escolha: {
+                provider: agentConfig?.voiceProvider ?? null,
+                credentialId: agentConfig?.voiceCredentialId ?? null,
+                voiceId: agentConfig?.voiceId ?? null,
+                voiceModel: agentConfig?.voiceModel ?? null,
+              },
+              ambiente: {
+                ELEVENLABS_API_KEY: env.ELEVENLABS_API_KEY,
+                ELEVENLABS_VOICE_ID: env.ELEVENLABS_VOICE_ID,
+                ELEVENLABS_MODEL_ID: env.ELEVENLABS_MODEL_ID,
+              },
+            },
+            runLog,
+          );
+          return {
+            provedor: resolvida.provedor ?? undefined,
+            config: resolvida.config,
+            fetchImpl: fetch,
+            subir: subirAudioNoStorage(runLog),
+          };
         }
         // F4-04: sinaliza (independente do gate F4-01/F4-08) se ESTA candidata é uma
         // promessa fora de tabela — usado só para correlacionar com o jailbreak no fim do

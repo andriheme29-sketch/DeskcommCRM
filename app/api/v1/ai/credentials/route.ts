@@ -17,7 +17,11 @@ import { z } from "zod";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
 import { guardarCredencial, MENSAGEM_ASSINATURA_SO_PELO_LOGIN } from "@/lib/ai/credenciais/guardar";
-import { IDS_COM_CHAVE } from "@/lib/ai/pontos/provedores";
+import {
+  aceitaEnderecoNaCredencial,
+  exigeEnderecoNaCredencial,
+  IDS_COM_CHAVE,
+} from "@/lib/ai/pontos/provedores";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { traduzir } from "@/lib/i18n/dicionario";
@@ -95,10 +99,13 @@ export async function POST(req: NextRequest): Promise<Response> {
   // Barra final removida antes de gravar, como `lib/webhooks/url-publica.ts`
   // decidiu para o mesmo formato: `base + "/" + caminho` viraria `.../v1//models`.
   const baseUrl = (input.base_url ?? "").trim().replace(/\/+$/, "");
-  if (provider === "custom" && baseUrl === "") {
+  // Exige o endereço só de quem não tem endpoint oficial — hoje o provedor de
+  // voz aberto (`tts-aberto`). A pergunta mora em `exigeEnderecoNaCredencial`
+  // (`lib/ai/pontos/provedores.ts`): duas réguas para o mesmo fato divergem.
+  if (exigeEnderecoNaCredencial(provider) && baseUrl === "") {
     return fail(
       "validation_failed",
-      t("Informe o endereço (base URL) do provedor personalizado."),
+      t("Informe o endereço (base URL) do provedor."),
       422,
       { requestId },
     );
@@ -111,14 +118,14 @@ export async function POST(req: NextRequest): Promise<Response> {
       { requestId },
     );
   }
-  // Os quatro nativos continuam 100% iguais: o endpoint deles é intrínseco, e
-  // gravar endereço ao lado de uma chave da OpenAI seria configuração que o
-  // runtime lê e ninguém preencheu pela tela. Quem quer endpoint próprio num
-  // nativo aponta o BINDING no painel de provedores — caminho que já existe.
-  if (provider !== "custom" && baseUrl !== "") {
+  // Endereço só faz sentido em quem ACEITA um: o personalizado de texto, os dois
+  // de voz, e (no painel de provedores, não aqui) os compatíveis. Nos nativos de
+  // texto o endpoint é intrínseco, e gravar endereço ao lado de uma chave da
+  // OpenAI seria configuração que o runtime lê e ninguém preencheu pela tela.
+  if (!aceitaEnderecoNaCredencial(provider) && baseUrl !== "") {
     return fail(
       "validation_failed",
-      t("Só o provedor personalizado aceita um endereço (base URL) próprio."),
+      t("Este provedor não aceita um endereço (base URL) próprio."),
       422,
       { requestId },
     );

@@ -3026,6 +3026,63 @@ export const DICIONARIO: Traducoes = {
   "Endpoint seu que fala a API da OpenAI — OmniRouter, 9Router, LiteLLM hospedado ou proxy corporativo, num endereço público. Você informa o endereço (base URL) e a chave, e o CRM conversa com ele como conversa com a OpenAI.": {
     es: "Endpoint propio que habla la API de OpenAI — OmniRouter, 9Router, LiteLLM alojado o proxy corporativo, en una dirección pública. Tú informas la dirección (base URL) y la clave, y el CRM conversa con él como conversa con OpenAI.",
   },
+  // Provedores de VOZ (migration 0591): a lista que a tela de Credenciais
+  // oferece ao lado dos de texto, para o agente responder por nota de voz.
+  "A voz do agente: o assistente responde por nota de voz no lugar do texto. Vale a chave da sua conta; se você fala com um proxy ou uma instalação própria da ElevenLabs, informe o endereço.": {
+    es: "La voz del agente: el asistente responde por nota de voz en lugar del texto. Vale la clave de tu cuenta; si hablas con un proxy o una instalación propia de ElevenLabs, informa la dirección.",
+  },
+  "Qualquer gateway que fale o /audio/speech da OpenAI — 9Router, LiteLLM, proxy corporativo. Você informa o endereço, a chave e a voz, e o CRM fala por ele.": {
+    es: "Cualquier gateway que hable el /audio/speech de OpenAI — 9Router, LiteLLM, proxy corporativo. Tú informas la dirección, la clave y la voz, y el CRM habla por él.",
+  },
+  "ElevenLabs (voz)": { es: "ElevenLabs (voz)" },
+  "Voz por endpoint próprio (compatível com OpenAI)": {
+    es: "Voz por endpoint propio (compatible con OpenAI)",
+  },
+  // A voz do AGENTE: o seletor de modo e os campos de provedor/voz/modelo
+  // (`app/app/ai/agents/[id]/_components/VozDoAgente.tsx`, migration 0591).
+  "Voz do agente": { es: "Voz del agente" },
+  "Como antes (o prompt decide)": { es: "Como antes (el prompt decide)" },
+  "Nunca mandar áudio": { es: "Nunca enviar audio" },
+  "Só quando o cliente mandar áudio": { es: "Solo cuando el cliente envíe audio" },
+  "Sempre responder em voz": { es: "Siempre responder con voz" },
+  "Decidir sozinho (recomendado)": { es: "Decidir solo (recomendado)" },
+  "Provedor de voz": { es: "Proveedor de voz" },
+  "Automático (a chave de voz da empresa)": {
+    es: "Automático (la clave de voz de la empresa)",
+  },
+  "Chave de voz": { es: "Clave de voz" },
+  "Voz (opcional)": { es: "Voz (opcional)" },
+  "vazio = voz padrão do provedor": { es: "vacío = voz predeterminada del proveedor" },
+  "Modelo de voz (opcional)": { es: "Modelo de voz (opcional)" },
+  "vazio = modelo padrão do provedor": {
+    es: "vacío = modelo predeterminado del proveedor",
+  },
+  "Cadastre uma chave de voz": { es: "Registra una clave de voz" },
+  "em IA › Credenciais para o agente poder falar. Sem chave, a resposta sai em texto como sempre.":
+    {
+      es: "en IA › Credenciales para que el agente pueda hablar. Sin clave, la respuesta sale en texto como siempre.",
+    },
+  // As explicações de cada modo (chave dinâmica EXPLICACAO_DO_MODO[voice_mode]).
+  "Como antes: o agente fala em voz quando o próprio modelo decide, pelo que estiver escrito no prompt.":
+    {
+      es: "Como antes: el agente habla con voz cuando el propio modelo lo decide, según lo que esté escrito en el prompt.",
+    },
+  "O agente nunca manda nota de voz. Texto sempre — inclusive se o prompt pedir áudio.":
+    {
+      es: "El agente nunca envía nota de voz. Texto siempre, incluso si el prompt pide audio.",
+    },
+  "O agente responde em voz só quando o cliente mandou uma nota de voz. Texto no resto.":
+    {
+      es: "El agente responde con voz solo cuando el cliente envió una nota de voz. Texto en el resto.",
+    },
+  "O agente responde em voz sempre que o texto couber bem falado. Link, código de pedido e listas continuam saindo em texto.":
+    {
+      es: "El agente responde con voz siempre que el texto se preste bien a ser hablado. Enlace, código de pedido y listas siguen saliendo en texto.",
+    },
+  "O agente manda voz quando o cliente mandou áudio, pediu voz, ou o prompt pedir — e texto no resto. É o modo que equilibra experiência e custo.":
+    {
+      es: "El agente envía voz cuando el cliente envió audio, pidió voz, o el prompt lo pide — y texto en el resto. Es el modo que equilibra experiencia y costo.",
+    },
   "Endereço (base URL)": { es: "Dirección (base URL)" },
   "Obrigatório — ex.: https://seu-gateway.example/v1": {
     es: "Obligatorio — ej.: https://tu-gateway.example/v1",
