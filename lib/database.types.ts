@@ -4355,6 +4355,157 @@ export type Database = {
           },
         ]
       }
+      cobranca_assinaturas: {
+        Row: {
+          assinaturas_vivas: number
+          cancela_no_fim: boolean
+          checkout_expira_em: string | null
+          checkout_url: string | null
+          created_at: string
+          estado: string
+          modo: string | null
+          organization_id: string
+          plano_agendado_id: string | null
+          plano_id: string
+          prazo_extra_ate: string | null
+          provedor: string | null
+          provedor_assinatura_id: string | null
+          provedor_cliente_id: string | null
+          proximo_vencimento: string | null
+          relida_em: string | null
+          trial_ate: string | null
+          ultimo_aviso: string | null
+          ultimo_aviso_em: string | null
+          ultimo_erro: string | null
+          ultimo_erro_em: string | null
+          updated_at: string
+          vencida_desde: string | null
+        }
+        Insert: {
+          assinaturas_vivas?: number
+          cancela_no_fim?: boolean
+          checkout_expira_em?: string | null
+          checkout_url?: string | null
+          created_at?: string
+          estado?: string
+          modo?: string | null
+          organization_id: string
+          plano_agendado_id?: string | null
+          plano_id: string
+          prazo_extra_ate?: string | null
+          provedor?: string | null
+          provedor_assinatura_id?: string | null
+          provedor_cliente_id?: string | null
+          proximo_vencimento?: string | null
+          relida_em?: string | null
+          trial_ate?: string | null
+          ultimo_aviso?: string | null
+          ultimo_aviso_em?: string | null
+          ultimo_erro?: string | null
+          ultimo_erro_em?: string | null
+          updated_at?: string
+          vencida_desde?: string | null
+        }
+        Update: {
+          assinaturas_vivas?: number
+          cancela_no_fim?: boolean
+          checkout_expira_em?: string | null
+          checkout_url?: string | null
+          created_at?: string
+          estado?: string
+          modo?: string | null
+          organization_id?: string
+          plano_agendado_id?: string | null
+          plano_id?: string
+          prazo_extra_ate?: string | null
+          provedor?: string | null
+          provedor_assinatura_id?: string | null
+          provedor_cliente_id?: string | null
+          proximo_vencimento?: string | null
+          relida_em?: string | null
+          trial_ate?: string | null
+          ultimo_aviso?: string | null
+          ultimo_aviso_em?: string | null
+          ultimo_erro?: string | null
+          ultimo_erro_em?: string | null
+          updated_at?: string
+          vencida_desde?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobranca_assinaturas_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobranca_assinaturas_plano_agendado_id_fkey"
+            columns: ["plano_agendado_id"]
+            isOneToOne: false
+            referencedRelation: "cobranca_planos"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobranca_assinaturas_plano_id_fkey"
+            columns: ["plano_id"]
+            isOneToOne: false
+            referencedRelation: "cobranca_planos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cobranca_planos: {
+        Row: {
+          arquivado_em: string | null
+          created_at: string
+          id: string
+          intervalo: string
+          max_assentos: number | null
+          max_canais: number | null
+          moeda: string
+          nome: string
+          padrao_no_cadastro: boolean
+          preco_cents: number
+          teto_ia_usd_cents: number | null
+          trial_dias: number
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          arquivado_em?: string | null
+          created_at?: string
+          id?: string
+          intervalo: string
+          max_assentos?: number | null
+          max_canais?: number | null
+          moeda?: string
+          nome: string
+          padrao_no_cadastro?: boolean
+          preco_cents: number
+          teto_ia_usd_cents?: number | null
+          trial_dias?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          arquivado_em?: string | null
+          created_at?: string
+          id?: string
+          intervalo?: string
+          max_assentos?: number | null
+          max_canais?: number | null
+          moeda?: string
+          nome?: string
+          padrao_no_cadastro?: boolean
+          preco_cents?: number
+          teto_ia_usd_cents?: number | null
+          trial_dias?: number
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       contact_field_proposals: {
         Row: {
           campo: string
@@ -8198,7 +8349,6 @@ export type Database = {
       }
       organizations: {
         Row: {
-          ai_budget_cents: number | null
           cnpj: string | null
           created_at: string
           created_by: string | null
@@ -8213,7 +8363,6 @@ export type Database = {
           onboarded_at: string | null
           onboarding_state: Json
           privacy_policy_url: string | null
-          rate_limit_rps: number
           redacted_at: string | null
           settings: Json
           slug: string
@@ -8226,7 +8375,6 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          ai_budget_cents?: number | null
           cnpj?: string | null
           created_at?: string
           created_by?: string | null
@@ -8241,7 +8389,6 @@ export type Database = {
           onboarded_at?: string | null
           onboarding_state?: Json
           privacy_policy_url?: string | null
-          rate_limit_rps?: number
           redacted_at?: string | null
           settings?: Json
           slug: string
@@ -8254,7 +8401,6 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          ai_budget_cents?: number | null
           cnpj?: string | null
           created_at?: string
           created_by?: string | null
@@ -8269,7 +8415,6 @@ export type Database = {
           onboarded_at?: string | null
           onboarding_state?: Json
           privacy_policy_url?: string | null
-          rate_limit_rps?: number
           redacted_at?: string | null
           settings?: Json
           slug?: string
@@ -9772,6 +9917,7 @@ export type Database = {
           default_pipeline_id: string
           default_stage_id: string
           field_map: Json
+          form_fields: Json
           id: string
           is_active: boolean
           kind: string
@@ -9792,6 +9938,7 @@ export type Database = {
           default_pipeline_id: string
           default_stage_id: string
           field_map?: Json
+          form_fields?: Json
           id?: string
           is_active?: boolean
           kind?: string
@@ -9812,6 +9959,7 @@ export type Database = {
           default_pipeline_id?: string
           default_stage_id?: string
           field_map?: Json
+          form_fields?: Json
           id?: string
           is_active?: boolean
           kind?: string
@@ -10576,6 +10724,8 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      fn_cobranca_liberar_suspensoes: { Args: { p_ator: string | null }; Returns: number }
+      fn_cobranca_ligada: { Args: never; Returns: boolean }
       fn_configurar_pre_go_live_canal: {
         Args: {
           p_canal: string
@@ -10694,6 +10844,7 @@ export type Database = {
         }
         Returns: Json
       }
+      fn_limite_do_plano: { Args: { p_org: string; p_recurso: string }; Returns: number | null }
       fn_log_event: {
         Args: {
           p_event_type: string
@@ -10785,6 +10936,16 @@ export type Database = {
           version_id: string
         }[]
       }
+      fn_push_inscricoes_que_veem_a_conversa: {
+        Args: { p_org: string; p_conversation: string }
+        Returns: {
+          id: string
+          user_id: string
+          endpoint: string
+          p256dh: string
+          auth: string
+        }[]
+      }
       fn_publish_followup_flow_version: {
         Args: {
           p_created_by: string
@@ -10833,6 +10994,16 @@ export type Database = {
       fn_user_org_ids: { Args: never; Returns: string[] }
       fn_user_role_in: { Args: { p_org: string }; Returns: number }
       fn_user_role_in_org: { Args: { p_org: string }; Returns: string }
+      fn_uso_de_ia: {
+        Args: {
+          p_agent_id?: string
+          p_ate: string
+          p_desde: string
+          p_org: string
+          p_purpose?: string
+        }
+        Returns: Json
+      }
       midpoint: { Args: { p_next: number; p_prev: number }; Returns: number }
       retrieve_top_k_chunks: {
         Args: {
@@ -11466,4 +11637,3 @@ export const Constants = {
     },
   },
 } as const
-
