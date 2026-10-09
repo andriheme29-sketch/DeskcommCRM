@@ -17,6 +17,33 @@ import {
   nomeDoPointerDeRetentativa,
   PROMPT_HINT_DA_RETENTATIVA,
 } from "@/lib/ai/agents/retentativa";
+import { COLD_HOURS_DA_REATIVACAO, deveProporReativacao } from "@/lib/followup/proposta-de-reativacao";
+import type { NodeResult } from "@/lib/followup/node-handlers";
+
+const COMPLETOU_ESGOTADO = { kind: "complete", outcome: "exhausted" } as NodeResult;
+const COMPLETOU_RESPONDEU = { kind: "complete", outcome: "replied" } as NodeResult;
+
+describe("deveProporReativacao (o remarketing da retentativa)", () => {
+  it("⭐ propõe quando a retentativa ESGOTOU sem resposta", () => {
+    expect(deveProporReativacao({ result: COMPLETOU_ESGOTADO, isReplay: false, ehRetentativa: true })).toBe(true);
+  });
+
+  it("NÃO propõe quando o cliente respondeu", () => {
+    expect(deveProporReativacao({ result: COMPLETOU_RESPONDEU, isReplay: false, ehRetentativa: true })).toBe(false);
+  });
+
+  it("NÃO propõe em fluxo que não é a retentativa (uma régua de clínica esgotada, por ex.)", () => {
+    expect(deveProporReativacao({ result: COMPLETOU_ESGOTADO, isReplay: false, ehRetentativa: false })).toBe(false);
+  });
+
+  it("NÃO propõe em reprocesso (replay)", () => {
+    expect(deveProporReativacao({ result: COMPLETOU_ESGOTADO, isReplay: true, ehRetentativa: true })).toBe(false);
+  });
+
+  it("a proposta vence — a janela é a do esfriamento", () => {
+    expect(COLD_HOURS_DA_REATIVACAO).toBeGreaterThan(0);
+  });
+});
 
 describe("montarGrafoDeRetentativa", () => {
   it("monta 2 toques escritos pela IA e um fim 'sem resposta'", () => {
