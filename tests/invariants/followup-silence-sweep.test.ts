@@ -211,6 +211,10 @@ function silenceSweepDb(): SilenceSweepDb {
       );
       return new Set(rows.map((r) => r.contact_id));
     },
+    // Só a retentativa do agente usa; o `silence` nunca chama. Stub vazio.
+    async loadContatosEmEtapaFinal() {
+      return new Set<string>();
+    },
     // Mesma pergunta do adaptador de produção: vivo em QUALQUER fluxo da org.
     async loadContatosComInscricaoViva(orgId, contactIds) {
       const { rows } = await pool.query<{ contact_id: string }>(

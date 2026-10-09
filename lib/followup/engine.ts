@@ -50,6 +50,9 @@ import {
   type AvisoRecuperacaoEsgotada,
 } from "./no-show-recuperacao-esgotada";
 import { interpolarDestino, persistirRespostaFollowupSupabase } from "./persistir-resposta";
+import { deveProporReativacao } from "./proposta-de-reativacao";
+import { COLD_HOURS_DA_REATIVACAO } from "./proposta-de-reativacao";
+import { propoeReativacao } from "@/lib/leads/reactivation";
 import { criarTarefaInterna as criarTarefaNoCrm } from "@/lib/tarefas/criar-tarefa";
 import { moveLeadHandler } from "@/app/api/v1/leads/_handler";
 import type { HandlerCtx } from "@/lib/api/handlers/types";
@@ -202,6 +205,19 @@ export interface AdminClient {
    * `no-show-recuperacao-esgotada.ts`.
    */
   abrirAvisoRecuperacaoEsgotada?(item: AvisoRecuperacaoEsgotada): Promise<void>;
+  /**
+   * A retentativa do agente esgotou sem resposta — propõe a REATIVAÇÃO do
+   * negócio (remarketing). Opcional: só a produção precisa. O adaptador
+   * confere o escopo (só `agente_sem_resposta` propõe) e resolve o lead pelo
+   * contato. Ver `proposta-de-reativacao.ts`.
+   */
+  proporReativacaoSeRetentativa?(input: {
+    organization_id: string;
+    contact_id: string;
+    pointer_id: string;
+    result: NodeResult;
+    isReplay: boolean;
+  }): Promise<void>;
   persistirRespostaFollowup(input: {
     organization_id: string;
     contact_id: string;
@@ -638,6 +654,21 @@ async function applyResult(
     await db.abrirAvisoRecuperacaoEsgotada?.(avisoEsgotada);
   }
 
+  // Retentativa esgotada → o negócio vai para reativação (remarketing). Mesma
+  // ordem e mesmo motivo do aviso acima: antes do `updateEnrollment`, para um
+  // tick futuro re-executar `complete` se a escrita falhar. Idempotente — o
+  // `propoeReativacao` não cria segunda proposta viva para o mesmo lead, e o
+  // `isReplay` corta o reprocesso.
+  if (result.kind === "complete" && !isReplay) {
+    await db.proporReativacaoSeRetentativa?.({
+      organization_id: enrollment.organization_id,
+      contact_id: enrollment.contact_id,
+      pointer_id: enrollment.pointer_id,
+      result,
+      isReplay,
+    });
+  }
+
   await db.updateEnrollment(enrollment.id, enrollment.organization_id, patch);
 
   if (
@@ -956,6 +987,41 @@ export async function runFollowupTick(deps: TickDeps, opts?: { limit?: number })
   return summary;
 }
 
+/**
+ * Resolve o NEGÓCIO do contato e propõe a reativação. O enrollment carrega
+ * `contact_id`, não o lead — `propoeReativacao` recebe `leadId`. Best-effort:
+ * falha aqui loga e não derruba o tick do motor (mesma doutrina do aviso de
+ * no-show). Não propõe quando o contato não tem negócio (`propoeReativacao`
+ * devolve `null` sozinho, mas evitamos a viagem quando não há lead).
+ */
+async function abrirPropostaDeReativacao(
+  admin: SupabaseClient,
+  input: { organization_id: string; contact_id: string },
+): Promise<void> {
+  try {
+    const { data: lead } = await admin
+      .from("crm_leads")
+      .select("id")
+      .eq("organization_id", input.organization_id)
+      .eq("contact_id", input.contact_id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const leadId = (lead as { id?: string } | null)?.id;
+    if (!leadId) return;
+    await propoeReativacao(admin, {
+      organizationId: input.organization_id,
+      leadId,
+      coldHours: COLD_HOURS_DA_REATIVACAO,
+    });
+  } catch (err) {
+    logger.warn("[retentativa] falha ao propor reativação após esgotar", {
+      organization_id: input.organization_id,
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 160),
+    });
+  }
+}
+
 /** Production adapter: `AdminClient` backed by the real Supabase service-role client. */
 export function createSupabaseAdminClient(admin: SupabaseClient): AdminClient {
   const revisions=new Map<string,number>();
@@ -976,6 +1042,22 @@ export function createSupabaseAdminClient(admin: SupabaseClient): AdminClient {
       return reavaliarDepoisDoRetorno(quando);
     },
     async assertAgenda(enrollment){await assertAgendaEffectSupabase(admin,{organizationId:enrollment.organization_id,contactId:enrollment.contact_id,enrollmentId:enrollment.id,nodeId:enrollment.current_node_id});},
+    async proporReativacaoSeRetentativa(input) {
+      const { data, error } = await admin
+        .from("followup_flow_pointers")
+        .select("trigger_config")
+        .eq("organization_id", input.organization_id)
+        .eq("id", input.pointer_id)
+        .maybeSingle();
+      if (error) throw new Error(`pointer_query_failed: ${error.message}`);
+      const g = triggerConfigSchema.safeParse((data as { trigger_config?: unknown } | null)?.trigger_config);
+      const ehRetentativa = g.success && g.data.kind === "agente_sem_resposta";
+      if (!deveProporReativacao({ result: input.result, isReplay: input.isReplay, ehRetentativa })) return;
+      await abrirPropostaDeReativacao(admin, {
+        organization_id: input.organization_id,
+        contact_id: input.contact_id,
+      });
+    },
     async claimDueEnrollments(limit, leaseSeconds) {
       const { data, error } = await admin.rpc("fn_claim_due_followup_enrollments", {
         p_limit: limit,

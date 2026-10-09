@@ -3081,6 +3081,16 @@ export const DICIONARIO: Traducoes = {
   // A voz do AGENTE: o seletor de modo e os campos de provedor/voz/modelo
   // (`app/app/ai/agents/[id]/_components/VozDoAgente.tsx`, migration 0591).
   "Voz do agente": { es: "Voz del agente" },
+  // A RETENTATIVA do agente (AgentForm.tsx): o agente insiste quando o cliente
+  // para de responder. Mesma tela da voz.
+  "Insistir quando o cliente para de responder": {
+    es: "Insistir cuando el cliente deja de responder",
+  },
+  "Depois que o agente responde e o cliente não volta, o agente tenta de novo no intervalo escolhido. Sem resposta, o negócio vai para reativação. Não insiste se o negócio já foi ganho ou perdido.":
+    {
+      es: "Después de que el agente responde y el cliente no vuelve, el agente intenta de nuevo en el intervalo elegido. Sin respuesta, el negocio pasa a reactivación. No insiste si el negocio ya se ganó o se perdió.",
+    },
+  "Esperar (horas)": { es: "Esperar (horas)" },
   "Como antes (o prompt decide)": { es: "Como antes (el prompt decide)" },
   "Nunca mandar áudio": { es: "Nunca enviar audio" },
   "Só quando o cliente mandar áudio": { es: "Solo cuando el cliente envíe audio" },

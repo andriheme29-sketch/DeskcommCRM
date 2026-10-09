@@ -45,6 +45,7 @@ describe("varredura de silêncio com teto", () => {
       loadContactIdsEmCooldown: async () => new Set<string>(),
       loadEncerramentosDoFluxo: async () => new Map(),
       loadContatosComPessoaNoComando: async () => new Set<string>(),
+      loadContatosEmEtapaFinal: async () => new Set<string>(),
       loadTriggerNode: async () => ({ id: "inicio", pedeAgente: false }),
       insertEnrollment: async () => ({ inserted: true }),
     };
@@ -60,6 +61,7 @@ describe("varredura de silêncio com teto", () => {
       new Date(AGORA.getTime() - 10 * MIN).toISOString(),
       [],
       new Date(AGORA.getTime() - 60 * MIN).toISOString(),
+      "silence",
     );
   });
 
@@ -133,5 +135,110 @@ describe("createSupabaseSilenceSweepDb — a consulta de PRODUÇÃO", () => {
       [],
     );
     expect(ids.sort()).toEqual(["antigo", "na-faixa"]);
+  });
+});
+
+describe("createSupabaseSilenceSweepDb — agente_sem_resposta (o agente falou por último)", () => {
+  /** Conversa mínima válida (fronteira + elegibilidade), como as do bloco acima. */
+  const conversaBase = (contato: string, inboundEm: string) => ({
+    id: `conv-${contato}`,
+    service_revision: 1,
+    current_demanda_id: null,
+    demandas: null,
+    status: "open",
+    contact_id: contato,
+    last_inbound_at: inboundEm,
+    last_outbound_at: null as string | null,
+    assignee_kind: null,
+    bot_silenced_until: null,
+    messages: [
+      { organization_id: "org", contact_id: contato, conversation_id: `conv-${contato}`, service_revision: 1, demanda_id: null, demanda_revision: null, sent_at: inboundEm },
+    ],
+    contacts: { tags: [], is_blocked: false, ai_authorized_at: null, phone_number: null, force_human: false },
+    sessao: { metadata: { ai_gate_mode: "open" } },
+    organizations: { status: "active" },
+  });
+
+  /** Mesma conversa, com a última palavra do AGENTE (`last_outbound_at`). */
+  const conversaOut = (contato: string, inboundEm: string, outboundEm: string) => ({
+    ...conversaBase(contato, inboundEm),
+    last_outbound_at: outboundEm,
+  });
+
+  const corte = () => new Date(AGORA.getTime() - 10 * MIN).toISOString();
+
+  it("⭐ entra quem o AGENTE respondeu por último e já venceu a espera", async () => {
+    const client = fakeSupabase([
+      [conversaOut("esperando", new Date(AGORA.getTime() - 30 * MIN).toISOString(), new Date(AGORA.getTime() - 20 * MIN).toISOString())],
+    ]);
+    const ids = await createSupabaseSilenceSweepDb(client).loadSilentContactIds("org", corte(), [], undefined, "agente_sem_resposta");
+    expect(ids).toEqual(["esperando"]);
+  });
+
+  it("NÃO entra quem respondeu depois do agente (o cliente tem a última palavra)", async () => {
+    const client = fakeSupabase([
+      [conversaOut("respondeu", new Date(AGORA.getTime() - 5 * MIN).toISOString(), new Date(AGORA.getTime() - 20 * MIN).toISOString())],
+    ]);
+    const ids = await createSupabaseSilenceSweepDb(client).loadSilentContactIds("org", corte(), [], undefined, "agente_sem_resposta");
+    expect(ids).toEqual([]);
+  });
+
+  it("NÃO entra quem o agente acabou de responder (a espera ainda não venceu)", async () => {
+    const client = fakeSupabase([
+      [conversaOut("recente", new Date(AGORA.getTime() - 40 * MIN).toISOString(), new Date(AGORA.getTime() - 5 * MIN).toISOString())],
+    ]);
+    const ids = await createSupabaseSilenceSweepDb(client).loadSilentContactIds("org", corte(), [], undefined, "agente_sem_resposta");
+    expect(ids).toEqual([]);
+  });
+
+  it("o MESMO contato que entra em agente_sem_resposta pode não entrar em silence (âncoras diferentes)", async () => {
+    // O agente falou há 20min e o cliente há 30min: em `silence` (corte de 10min
+    // sobre a última palavra do CLIENTE) ele é silencioso; aqui também. O que muda
+    // é quem manda na seleção — provado pelos dois casos acima.
+    const client = fakeSupabase([
+      [conversaOut("misto", new Date(AGORA.getTime() - 30 * MIN).toISOString(), new Date(AGORA.getTime() - 20 * MIN).toISOString())],
+    ]);
+    const comoSilence = await createSupabaseSilenceSweepDb(client).loadSilentContactIds("org", corte(), []);
+    expect(comoSilence).toEqual(["misto"]);
+  });
+});
+
+describe("gate de etapa final (só a retentativa do agente)", () => {
+  /** Lead fechado: etapa final (is_won/is_lost) OU status won/lost. */
+  const sweepDb = (emEtapaFinal: Set<string>, kind?: "silence" | "agente_sem_resposta") => {
+    const loadContatosEmEtapaFinal = vi.fn(async () => emEtapaFinal);
+    const insertEnrollment = vi.fn(async (_input: Parameters<SilenceSweepDb["insertEnrollment"]>[0]) => ({ inserted: true }));
+    const db: SilenceSweepDb = {
+      loadActiveSilencePointers: async () => [
+        { id: "ptr", organization_id: "org", active_version_id: "v1", threshold_minutes: 10, segments: [], ...(kind ? { kind } : {}) },
+      ],
+      loadSilentContactIds: async () => ["fechado", "aberto"],
+      loadContatosComRetornoVivo: async () => new Set<string>(),
+      loadContatosComInscricaoViva: async () => new Set<string>(),
+      loadContactIdsEmCooldown: async () => new Set<string>(),
+      loadEncerramentosDoFluxo: async () => new Map(),
+      loadContatosComPessoaNoComando: async () => new Set<string>(),
+      loadContatosEmEtapaFinal,
+      loadTriggerNode: async () => ({ id: "inicio", pedeAgente: false }),
+      insertEnrollment,
+    };
+    return { db, loadContatosEmEtapaFinal, insertEnrollment };
+  };
+  const gateDb = { loadEnabledPublishedFollowupAgents: async () => [] };
+
+  it("⭐ em agente_sem_resposta, quem está em etapa final NÃO é inscrito", async () => {
+    const { db, insertEnrollment } = sweepDb(new Set(["fechado"]), "agente_sem_resposta");
+    const s = await runSilenceSweep({ db, gateDb, clock: () => AGORA });
+    expect(insertEnrollment).toHaveBeenCalledTimes(1);
+    expect(insertEnrollment.mock.calls[0]?.[0]).toMatchObject({ contact_id: "aberto" });
+    expect(s.skipped_etapa_final).toBe(1);
+  });
+
+  it("o gate NÃO roda (nem barra) no silêncio comum", async () => {
+    const { db, loadContatosEmEtapaFinal, insertEnrollment } = sweepDb(new Set(["fechado"]));
+    const s = await runSilenceSweep({ db, gateDb, clock: () => AGORA });
+    expect(loadContatosEmEtapaFinal).not.toHaveBeenCalled();
+    expect(insertEnrollment).toHaveBeenCalledTimes(2);
+    expect(s.skipped_etapa_final).toBe(0);
   });
 });
