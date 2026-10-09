@@ -89,6 +89,21 @@ export const triggerConfigSchema = z.discriminatedUnion("kind", [
     params: z.strictObject({}),
     ...CANCEL_ON_REPLY,
   }),
+  // O AGENTE falou por último e o cliente não respondeu — o RETENTATIVA.
+  //
+  // É o INVERSO de `silence`: aquele ancora no que o CLIENTE deixou de dizer
+  // (`last_inbound_at`), este ancora no que o AGENTE mandou e ficou sem volta
+  // (`last_outbound_at > last_inbound_at`). O dono descreveu o caso assim: "o
+  // cliente tá conversando e para de responder; o agente persiste duas
+  // tentativas de 3 em 3 horas". `threshold_minutes` é a espera antes de cada
+  // toque (o "3h"), e a `escada` do modelo decide quantos toques há.
+  z.strictObject({
+    kind: z.literal("agente_sem_resposta"),
+    params: z.strictObject({
+      threshold_minutes: z.number().int().min(5).max(10_080),
+    }),
+    ...CANCEL_ON_REPLY,
+  }),
 ]);
 export type TriggerConfig = z.infer<typeof triggerConfigSchema>;
 

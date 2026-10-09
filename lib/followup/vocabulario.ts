@@ -607,6 +607,7 @@ export const GATILHOS: Record<TipoDeGatilho, string> = {
   webhook: "Disparado por uma automação em Webhooks",
   lead_created: "Lead criado",
   silence: "Silêncio",
+  agente_sem_resposta: "O agente respondeu e o cliente não voltou",
   stage_change: "Mudança de etapa no funil",
   // "Caso" é a palavra que a tela de escalação já usa. O rótulo diz o FATO que
   // dispara ("o agente pediu ajuda"), não o nome da tabela — quem lê é dono de

@@ -47,6 +47,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 export const GATILHOS_QUE_EXIGEM_AGENTE = [
   "silence",
+  "agente_sem_resposta",
   "stage_change",
   "case_opened",
   "appointment_no_show",

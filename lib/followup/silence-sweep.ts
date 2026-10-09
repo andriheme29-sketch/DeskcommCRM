@@ -133,6 +133,8 @@ export interface SilencePointer {
   active_version_id: string;
   threshold_minutes: number;
   segments: string[];
+  /** `silence` = o cliente parou de falar; `agente_sem_resposta` = o AGENTE falou e o cliente não voltou. Ausente = `silence` (retrocompatível). */
+  kind?: "silence" | "agente_sem_resposta";
   /** Pausa antes de recomeçar para quem já encerrou uma inscrição deste fluxo; ausente/0 = sem pausa. */
   reentry_pause_minutes?: number;
   /** Teto do silêncio: só entra quem está calado há MENOS que isto; ausente = sem teto. */
@@ -150,8 +152,17 @@ export interface SilenceSweepDb {
   /**
    * Contact ids da org sem inbound desde `cutoffIso` (inclusive); `segments` vazio = todos.
    * Com `desdeIso`, só quem falou pela última vez DEPOIS dele (o teto do silêncio).
+   * Com `kind='agente_sem_resposta'` o predicado inverte: quem conta é quem o
+   * AGENTE respondeu por último e o cliente não voltou (`last_outbound_at` entre
+   * `cutoffIso` e `desdeIso`), não quem deixou de escrever.
    */
-  loadSilentContactIds(orgId: string, cutoffIso: string, segments: string[], desdeIso?: string): Promise<string[]>;
+  loadSilentContactIds(
+    orgId: string,
+    cutoffIso: string,
+    segments: string[],
+    desdeIso?: string,
+    kind?: "silence" | "agente_sem_resposta",
+  ): Promise<string[]>;
   /**
    * Contatos com RETORNO agendado vivo — quem tem um "te escrevo no dia 30" a
    * caminho não entra no fluxo de silêncio. Ver `retorno-segura-o-fluxo.ts`.
@@ -293,7 +304,13 @@ export async function runSilenceSweep(deps: SilenceSweepDeps): Promise<SilenceSw
         pointer.max_silence_minutes && pointer.max_silence_minutes > pointer.threshold_minutes
           ? new Date(clock().getTime() - pointer.max_silence_minutes * 60_000).toISOString()
           : undefined;
-      const contactIds = await db.loadSilentContactIds(pointer.organization_id, cutoffIso, pointer.segments, desdeIso);
+      const contactIds = await db.loadSilentContactIds(
+        pointer.organization_id,
+        cutoffIso,
+        pointer.segments,
+        desdeIso,
+        pointer.kind ?? "silence",
+      );
       if (contactIds.length === 0) continue;
 
       const emCooldown = await db.loadContactIdsEmCooldown(
@@ -407,16 +424,25 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
         // já o prende em gatilho manual, e este corte é a segunda porta.
         if (!row.active_version_id || row.surface === "atendimento") continue;
         const parsed = triggerConfigSchema.safeParse(row.trigger_config);
-        if (!parsed.success || parsed.data.kind !== "silence") continue;
+        if (!parsed.success) continue;
+        // `silence` (o CLIENTE parou) e `agente_sem_resposta` (o AGENTE mandou e
+        // o cliente não voltou) têm a MESMA forma de pointer — só muda o
+        // predicado que escolhe os contatos (ver `loadSilentContactIds`).
+        if (parsed.data.kind !== "silence" && parsed.data.kind !== "agente_sem_resposta") continue;
         pointers.push({
           id: row.id,
           organization_id: row.organization_id,
           active_version_id: row.active_version_id,
+          kind: parsed.data.kind,
           threshold_minutes: parsed.data.params.threshold_minutes,
-          segments: parsed.data.params.segments ?? [],
-          reentry_pause_minutes: parsed.data.params.reentry_pause_minutes ?? 0,
-          ...(parsed.data.params.max_silence_minutes ? { max_silence_minutes: parsed.data.params.max_silence_minutes } : {}),
-          ...(parsed.data.params.reentry_pause_basis ? { reentry_pause_basis: parsed.data.params.reentry_pause_basis } : {}),
+          segments: parsed.data.kind === "silence" ? (parsed.data.params.segments ?? []) : [],
+          reentry_pause_minutes: parsed.data.kind === "silence" ? (parsed.data.params.reentry_pause_minutes ?? 0) : 0,
+          ...(parsed.data.kind === "silence" && parsed.data.params.max_silence_minutes
+            ? { max_silence_minutes: parsed.data.params.max_silence_minutes }
+            : {}),
+          ...(parsed.data.kind === "silence" && parsed.data.params.reentry_pause_basis
+            ? { reentry_pause_basis: parsed.data.params.reentry_pause_basis }
+            : {}),
           handoff_policy:
             row.handoff_policy === "allow" || row.handoff_policy === "cancel" ? row.handoff_policy : "pause",
         });
@@ -424,7 +450,7 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
       return pointers;
     },
 
-    async loadSilentContactIds(orgId, cutoffIso, segments, desdeIso) {
+    async loadSilentContactIds(orgId, cutoffIso, segments, desdeIso, kind = "silence") {
       // last_inbound_at é POR CONVERSA; o enrollment é POR CONTATO — reduz
       // client-side pro MAIS RECENTE `last_inbound_at` entre as conversas do
       // contato (um contato com 2+ channel_sessions não pode ser marcado
@@ -439,7 +465,7 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
       const { data, error } = await admin
         .from("conversations")
         .select(
-          "id, service_revision, current_demanda_id, demandas!conversations_current_demanda_id_fkey(revision,fechada_em), status, assignee_kind, bot_silenced_until, messages!messages_conversation_id_fkey(organization_id,contact_id,conversation_id,service_revision,demanda_id,demanda_revision,sent_at), contact_id, last_inbound_at, contacts:contact_id(tags, is_blocked, ai_authorized_at, phone_number, force_human), sessao:channel_session_id(metadata), organizations:organization_id(status)",
+          "id, service_revision, current_demanda_id, demandas!conversations_current_demanda_id_fkey(revision,fechada_em), status, assignee_kind, bot_silenced_until, messages!messages_conversation_id_fkey(organization_id,contact_id,conversation_id,service_revision,demanda_id,demanda_revision,sent_at), contact_id, last_inbound_at, last_outbound_at, contacts:contact_id(tags, is_blocked, ai_authorized_at, phone_number, force_human), sessao:channel_session_id(metadata), organizations:organization_id(status)",
         )
         .eq("organization_id", orgId).eq("demandas.organization_id", orgId)
         .eq("contacts.organization_id", orgId).eq("sessao.organization_id", orgId)
@@ -457,6 +483,7 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
         assignee_kind?: string | null; bot_silenced_until?: string | null;
         contact_id: string;
         last_inbound_at: string;
+        last_outbound_at: string | null;
         contacts: ContactEmbed;
         sessao: { metadata: Record<string, unknown> | null } | null;
         organizations: { status: string | null } | null;
@@ -470,6 +497,8 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
         {
           boundary: ServiceBoundary;
           at: number;
+          /** Quem falou por último na conversa MAIS RECENTE: o cliente (`inbound` fecha em `at`) ou o agente (`outboundAt > at`). */
+          outboundAt: number | null;
           tags: string[];
           blocked: boolean;
           permitidoPeloGate: boolean;
@@ -507,6 +536,7 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
           );
           latest.set(row.contact_id, {
             boundary, at,
+            outboundAt: row.last_outbound_at ? Date.parse(row.last_outbound_at) : null,
             tags: row.contacts?.tags ?? [],
             blocked: row.contacts?.is_blocked ?? false,
             permitidoPeloGate: acesso.permite,
@@ -527,8 +557,20 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
         // enrollment: no pré-go-live só testadores avançam; no allowlist comum
         // continua valendo a autorização temporária da origem.
         if (!v.permitidoPeloGate) continue;
-        if (v.at > cutoff) continue; // conversou depois do corte — não é silêncio
-        if (desde !== null && v.at < desde) continue; // silêncio antigo demais para este fluxo
+
+        if (kind === "agente_sem_resposta") {
+          // A ÂNCORA aqui é o que o AGENTE mandou: só conta quem foi respondido
+          // pelo agente e não devolveu (`last_outbound_at` mais recente que o
+          // `last_inbound_at`). `at` é a última palavra do cliente.
+          if (v.outboundAt === null) continue; // agente nunca escreveu nesta conversa
+          if (v.outboundAt <= v.at) continue; // o cliente já falou depois do agente — não é espera
+          if (v.outboundAt > cutoff) continue; // o agente falou DEPOIS do corte: ainda não venceu a espera
+          if (desde !== null && v.outboundAt < desde) continue;
+        } else {
+          if (v.at > cutoff) continue; // conversou depois do corte — não é silêncio
+          if (desde !== null && v.at < desde) continue; // silêncio antigo demais para este fluxo
+        }
+
         if (segments.length > 0 && !segments.some((s) => v.tags.includes(s))) continue;
         silentIds.push(contactId);
         origins.set(`${orgId}:${contactId}`, v.boundary);
