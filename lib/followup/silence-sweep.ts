@@ -210,6 +210,12 @@ export interface SilenceSweepDb {
    * continua tratado no insert: ele cobre a corrida, não o caso comum.
    */
   loadContatosComInscricaoViva(orgId: string, contactIds: string[]): Promise<Set<string>>;
+  /**
+   * Dos `contactIds`, os que têm um negócio ENCERRANDO o funil — etapa marcada
+   * como ganho/perdido (`crm_stages.is_won`/`is_lost`) ou `status` fechado.
+   * Só a retentativa do agente usa: "não insiste em quem já chegou ao fim".
+   */
+  loadContatosEmEtapaFinal(orgId: string, contactIds: string[]): Promise<Set<string>>;
   /** Insere o enrollment nascendo no nó trigger; `inserted:false` = 23505 (já vivo nesse pointer) → skip. */
   insertEnrollment(input: {
     organization_id: string;
@@ -235,6 +241,8 @@ export interface SilenceSweepSummary {
   skipped_reentry_pause: number;
   /** Silenciosos cuja conversa tem uma pessoa no comando (fluxo sem `handoff_policy='allow'`). */
   skipped_human_owned: number;
+  /** Só retentativa: negócios que já encerraram o funil (etapa ganho/perdido ou status fechado). */
+  skipped_etapa_final: number;
   /**
    * Pointers que FALHARAM nesta varredura (logados e pulados). Um pointer ruim
    * — de uma empresa só — não pode calar a varredura de todas as outras: antes,
@@ -260,6 +268,7 @@ export async function runSilenceSweep(deps: SilenceSweepDeps): Promise<SilenceSw
     skipped_pending_return: 0,
     skipped_reentry_pause: 0,
     skipped_human_owned: 0,
+    skipped_etapa_final: 0,
     pointers_failed: 0,
   };
 
@@ -331,8 +340,18 @@ export async function runSilenceSweep(deps: SilenceSweepDeps): Promise<SilenceSw
           ? await db.loadContatosComPessoaNoComando(pointer.organization_id, contactIds)
           : new Set<string>();
       const comInscricaoViva = await db.loadContatosComInscricaoViva(pointer.organization_id, contactIds);
+      // A retentativa do agente não insiste em quem já chegou ao fim do funil
+      // (regra do dono). O `silence` mantém o comportamento de sempre.
+      const emEtapaFinal =
+        pointer.kind === "agente_sem_resposta"
+          ? await db.loadContatosEmEtapaFinal(pointer.organization_id, contactIds)
+          : new Set<string>();
 
       for (const contactId of contactIds) {
+        if (emEtapaFinal.has(contactId)) {
+          summary.skipped_etapa_final++;
+          continue;
+        }
         if (comRetorno.has(contactId)) {
           summary.skipped_pending_return++;
           continue;
@@ -607,6 +626,34 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
 
     async loadContatosComPessoaNoComando(orgId, contactIds) {
       return new Set(contactIds.filter((id) => pessoaNoComando.has(`${orgId}:${id}`)));
+    },
+
+    async loadContatosEmEtapaFinal(orgId, contactIds) {
+      if (contactIds.length === 0) return new Set();
+      const finais = new Set<string>();
+      for (let i = 0; i < contactIds.length; i += LOTE_DE_CONTATOS) {
+        const lote = contactIds.slice(i, i + LOTE_DE_CONTATOS);
+        const { data: leads, error } = await admin
+          .from("crm_leads")
+          .select("contact_id, status, crm_stages!inner(is_won, is_lost, is_archived)")
+          .eq("organization_id", orgId)
+          .in("contact_id", lote);
+        if (error) throw new Error(error.message);
+        for (const row of (leads ?? []) as unknown as Array<{
+          contact_id: string | null;
+          status: string | null;
+          crm_stages: { is_won: boolean | null; is_lost: boolean | null; is_archived: boolean | null } | null;
+        }>) {
+          if (!row.contact_id) continue;
+          const etapa = row.crm_stages;
+          const fechada =
+            row.status === "won" ||
+            row.status === "lost" ||
+            (etapa != null && (etapa.is_won === true || etapa.is_lost === true));
+          if (fechada) finais.add(row.contact_id);
+        }
+      }
+      return finais;
     },
 
     async loadContatosComInscricaoViva(orgId, contactIds) {

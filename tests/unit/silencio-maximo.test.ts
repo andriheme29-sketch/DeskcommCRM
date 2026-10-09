@@ -45,6 +45,7 @@ describe("varredura de silêncio com teto", () => {
       loadContactIdsEmCooldown: async () => new Set<string>(),
       loadEncerramentosDoFluxo: async () => new Map(),
       loadContatosComPessoaNoComando: async () => new Set<string>(),
+      loadContatosEmEtapaFinal: async () => new Set<string>(),
       loadTriggerNode: async () => ({ id: "inicio", pedeAgente: false }),
       insertEnrollment: async () => ({ inserted: true }),
     };
@@ -199,5 +200,45 @@ describe("createSupabaseSilenceSweepDb — agente_sem_resposta (o agente falou p
     ]);
     const comoSilence = await createSupabaseSilenceSweepDb(client).loadSilentContactIds("org", corte(), []);
     expect(comoSilence).toEqual(["misto"]);
+  });
+});
+
+describe("gate de etapa final (só a retentativa do agente)", () => {
+  /** Lead fechado: etapa final (is_won/is_lost) OU status won/lost. */
+  const sweepDb = (emEtapaFinal: Set<string>, kind?: "silence" | "agente_sem_resposta") => {
+    const loadContatosEmEtapaFinal = vi.fn(async () => emEtapaFinal);
+    const insertEnrollment = vi.fn(async (_input: Parameters<SilenceSweepDb["insertEnrollment"]>[0]) => ({ inserted: true }));
+    const db: SilenceSweepDb = {
+      loadActiveSilencePointers: async () => [
+        { id: "ptr", organization_id: "org", active_version_id: "v1", threshold_minutes: 10, segments: [], ...(kind ? { kind } : {}) },
+      ],
+      loadSilentContactIds: async () => ["fechado", "aberto"],
+      loadContatosComRetornoVivo: async () => new Set<string>(),
+      loadContatosComInscricaoViva: async () => new Set<string>(),
+      loadContactIdsEmCooldown: async () => new Set<string>(),
+      loadEncerramentosDoFluxo: async () => new Map(),
+      loadContatosComPessoaNoComando: async () => new Set<string>(),
+      loadContatosEmEtapaFinal,
+      loadTriggerNode: async () => ({ id: "inicio", pedeAgente: false }),
+      insertEnrollment,
+    };
+    return { db, loadContatosEmEtapaFinal, insertEnrollment };
+  };
+  const gateDb = { loadEnabledPublishedFollowupAgents: async () => [] };
+
+  it("⭐ em agente_sem_resposta, quem está em etapa final NÃO é inscrito", async () => {
+    const { db, insertEnrollment } = sweepDb(new Set(["fechado"]), "agente_sem_resposta");
+    const s = await runSilenceSweep({ db, gateDb, clock: () => AGORA });
+    expect(insertEnrollment).toHaveBeenCalledTimes(1);
+    expect(insertEnrollment.mock.calls[0]?.[0]).toMatchObject({ contact_id: "aberto" });
+    expect(s.skipped_etapa_final).toBe(1);
+  });
+
+  it("o gate NÃO roda (nem barra) no silêncio comum", async () => {
+    const { db, loadContatosEmEtapaFinal, insertEnrollment } = sweepDb(new Set(["fechado"]));
+    const s = await runSilenceSweep({ db, gateDb, clock: () => AGORA });
+    expect(loadContatosEmEtapaFinal).not.toHaveBeenCalled();
+    expect(insertEnrollment).toHaveBeenCalledTimes(2);
+    expect(s.skipped_etapa_final).toBe(0);
   });
 });

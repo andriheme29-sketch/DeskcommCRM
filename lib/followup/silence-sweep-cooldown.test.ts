@@ -32,6 +32,7 @@ function fakeDb(opts: {
     // Pausa de reentrada e pessoa no comando: neutros aqui.
     loadEncerramentosDoFluxo: async () => new Map(),
     loadContatosComPessoaNoComando: async () => new Set<string>(),
+    loadContatosEmEtapaFinal: async () => new Set<string>(),
     loadContatosComInscricaoViva: async () => new Set<string>(),
     loadTriggerNode: async () => ({ id: "t-1", pedeAgente: false }),
     loadContactIdsEmCooldown: async () => opts.contatosEmCooldown,
