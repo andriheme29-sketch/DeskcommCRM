@@ -83,19 +83,35 @@ const followupSendWindowSchema = z
 //
 // #490 acrescenta `send_window`: `null` preserva o comportamento histórico; uma
 // faixa limita SOMENTE envios proativos, sem tocar o horário do inbound.
+//
+// `retentativa` (2026-10-09) — o agente insiste quando o cliente para de
+// responder: 2 toques de 3 em 3 horas e, sem resposta, o negócio vai para
+// reativação. `null`/`enabled:false` = comportamento de sempre (o agente não
+// persiste). O `intervalo_horas` é o `threshold_minutes` do gatilho e a espera
+// entre os toques; `tentativas` é quantos toques a escada monta.
+const retentativaConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    intervalo_horas: z.number().int().min(1).max(168).default(3),
+    tentativas: z.number().int().min(1).max(5).default(2),
+  })
+  .strict();
+
 const followupConfigObjectSchema = z
   .object({
     enabled: z.boolean().default(false),
     flow_pointer_ids: z.array(UUID).max(20).default([]),
     send_window: followupSendWindowSchema.nullable().optional().default(null),
     callback_enabled: z.boolean().optional(),
+    retentativa: retentativaConfigSchema.nullable().optional().default(null),
   })
   .strict();
 
-const followupConfigSchema = followupConfigObjectSchema.default({
+export const followupConfigSchema = followupConfigObjectSchema.default({
   enabled: false,
   flow_pointer_ids: [],
   send_window: null,
+  retentativa: null,
 });
 
 const followupPatchSchema = followupConfigObjectSchema
@@ -104,6 +120,7 @@ const followupPatchSchema = followupConfigObjectSchema
     flow_pointer_ids: followupConfigObjectSchema.shape.flow_pointer_ids.removeDefault(),
     send_window: followupConfigObjectSchema.shape.send_window.removeDefault(),
     callback_enabled: followupConfigObjectSchema.shape.callback_enabled,
+    retentativa: followupConfigObjectSchema.shape.retentativa.removeDefault(),
   })
   .partial();
 

@@ -218,13 +218,29 @@ interface FollowupValue {
   callback_enabled: boolean;
   /** Ausente em versões antigas; null = sem janela própria. */
   send_window?: FollowupWindowValue | null;
+  /** Retentativa do agente (o agente insiste quando o cliente para de responder). */
+  retentativa?: RetentativaValue | null;
 }
+
+/** `null` = nunca configurada (comportamento de sempre: o agente não persiste). */
+interface RetentativaValue {
+  enabled: boolean;
+  intervalo_horas: number;
+  tentativas: number;
+}
+
+export const DEFAULT_RETENTATIVA: RetentativaValue = {
+  enabled: false,
+  intervalo_horas: 3,
+  tentativas: 2,
+};
 
 const DEFAULT_FOLLOWUP: FollowupValue = {
   enabled: false,
   flow_pointer_ids: [],
   send_window: null,
   callback_enabled: true,
+  retentativa: null,
 };
 
 const DEFAULT_TRIGGER: TriggerValue = {
@@ -1427,6 +1443,92 @@ export function AgentForm(props: Props) {
               }
               disabled={disabled}
             />
+
+            {/* RETENTATIVA DO AGENTE — o "lugar certo pra controlar" (o dono
+                pediu: em vez de desenhar follow-up, uma configuração no agente).
+                Por baixo vira um fluxo pronto (2 toques escritos pela IA, de
+                `intervalo_horas` em `intervalo_horas`), publicado na hora de
+                publicar o agente. Só a RETENTATIVA some sozinha no fim do funil
+                e vira proposta de reativação — o resto do follow-up segue igual. */}
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="retentativa_enabled"
+                  checked={form.followup.retentativa?.enabled ?? false}
+                  onCheckedChange={(v) =>
+                    patch({
+                      followup: {
+                        ...form.followup,
+                        retentativa: { ...(form.followup.retentativa ?? DEFAULT_RETENTATIVA), enabled: v },
+                      },
+                    })
+                  }
+                  disabled={disabled}
+                />
+                <Label htmlFor="retentativa_enabled">
+                  {t("Insistir quando o cliente para de responder")}
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Depois que o agente responde e o cliente não volta, o agente tenta de novo no intervalo escolhido. Sem resposta, o negócio vai para reativação. Não insiste se o negócio já foi ganho ou perdido.",
+                )}
+              </p>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="retentativa_intervalo" className="text-xs">
+                    {t("Esperar (horas)")}
+                  </Label>
+                  <Input
+                    id="retentativa_intervalo"
+                    type="number"
+                    min={1}
+                    max={168}
+                    className="w-24"
+                    value={form.followup.retentativa?.intervalo_horas ?? DEFAULT_RETENTATIVA.intervalo_horas}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      patch({
+                        followup: {
+                          ...form.followup,
+                          retentativa: {
+                            ...(form.followup.retentativa ?? DEFAULT_RETENTATIVA),
+                            intervalo_horas: Number.isFinite(n) ? Math.min(168, Math.max(1, Math.trunc(n))) : 3,
+                          },
+                        },
+                      });
+                    }}
+                    disabled={disabled || !(form.followup.retentativa?.enabled ?? false)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="retentativa_tentativas" className="text-xs">
+                    {t("Tentativas")}
+                  </Label>
+                  <Input
+                    id="retentativa_tentativas"
+                    type="number"
+                    min={1}
+                    max={5}
+                    className="w-24"
+                    value={form.followup.retentativa?.tentativas ?? DEFAULT_RETENTATIVA.tentativas}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      patch({
+                        followup: {
+                          ...form.followup,
+                          retentativa: {
+                            ...(form.followup.retentativa ?? DEFAULT_RETENTATIVA),
+                            tentativas: Number.isFinite(n) ? Math.min(5, Math.max(1, Math.trunc(n))) : 2,
+                          },
+                        },
+                      });
+                    }}
+                    disabled={disabled || !(form.followup.retentativa?.enabled ?? false)}
+                  />
+                </div>
+              </div>
+            </div>
           </Card>
 
           {/* Comandos pelo celular (`#on`/`#off`, C-076). Salva em
