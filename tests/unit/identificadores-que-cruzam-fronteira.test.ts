@@ -180,6 +180,11 @@ const SITES: { arquivo: string; fronteira: string; papel?: "gerador" | "validado
   { arquivo: "app/api/v1/conversations/[id]/notes/media/route.ts", fronteira: "storage.chave-de-objeto" },
   { arquivo: "app/api/v1/ai/knowledge/sources/upload/route.ts", fronteira: "storage.chave-de-objeto" },
   { arquivo: "app/api/v1/ai/knowledge/sources/route.ts", fronteira: "storage.chave-de-objeto" },
+  // A nota de voz do agente: `{org}/{conversa}/voz-{timestamp}.{ext}` — os dois
+  // pedaços vêm do turno (org do JWT, conversa já resolvida) e o sufixo é o
+  // instante do arquivo, nunca texto do modelo. É o único `.upload(` da camada
+  // do agente: a foto do catálogo usa `.copy(` (o arquivo já existe no bucket).
+  { arquivo: "lib/agent-engine/agent/audio-do-turno.ts", fronteira: "storage.chave-de-objeto" },
   // O PDF da proposta comercial (#1832): `<org>/<proposta>.pdf`, dois uuids.
   { arquivo: "lib/propostas/storage.ts", fronteira: "storage.chave-de-objeto" },
   // Chave de idempotência: os geradores (manda UUID) e os validadores (exige UUID).
