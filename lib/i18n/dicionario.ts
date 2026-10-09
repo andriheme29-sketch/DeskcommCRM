@@ -3091,7 +3091,6 @@ export const DICIONARIO: Traducoes = {
       es: "Después de que el agente responde y el cliente no vuelve, el agente intenta de nuevo en el intervalo elegido. Sin respuesta, el negocio pasa a reactivación. No insiste si el negocio ya se ganó o se perdió.",
     },
   "Esperar (horas)": { es: "Esperar (horas)" },
-  "Tentativas": { es: "Intentos" },
   "Como antes (o prompt decide)": { es: "Como antes (el prompt decide)" },
   "Nunca mandar áudio": { es: "Nunca enviar audio" },
   "Só quando o cliente mandar áudio": { es: "Solo cuando el cliente envíe audio" },
