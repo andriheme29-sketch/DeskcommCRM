@@ -635,7 +635,7 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
         const lote = contactIds.slice(i, i + LOTE_DE_CONTATOS);
         const { data: leads, error } = await admin
           .from("crm_leads")
-          .select("contact_id, status, crm_stages!inner(is_won, is_lost, is_archived)")
+          .select("contact_id, status, crm_stages!crm_leads_stage_id_fkey!inner(is_won, is_lost, is_archived)")
           .eq("organization_id", orgId)
           .in("contact_id", lote);
         if (error) throw new Error(error.message);
