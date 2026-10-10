@@ -70,10 +70,11 @@ export interface SendMessageInput {
    *
    * `kind` decide a NATUREZA no handler, e o default é `image` de propósito:
    * todo chamador que já existia (a foto do catálogo) manda mídia e esperava
-   * foto, então omitir não muda comportamento nenhum — só o áudio precisa dizer
-   * o que é. Um `kind` obrigatório quebraria os dublês de teste por um enfeite.
+   * foto, então omitir não muda comportamento nenhum — só o áudio e o vídeo
+   * precisam dizer o que são. Um `kind` obrigatório quebraria os dublês de
+   * teste por um enfeite.
    */
-  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' };
+  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' };
 }
 
 /**
@@ -99,8 +100,14 @@ export function corpoDoEnvio(
         ? {
             // O `type` é o que o handler repassa ao canal (`kind: input.type` →
             // `wahaSendPlanFor`): `image` vira sendImage, `audio` vira sendVoice
-            // com conversão para ogg/opus. Trocar aqui troca o caminho inteiro.
-            type: input.media.kind === 'audio' ? ('audio' as const) : ('image' as const),
+            // com conversão para ogg/opus, `video` vira sendVideo. Trocar aqui
+            // troca o caminho inteiro.
+            type:
+              input.media.kind === 'audio'
+                ? ('audio' as const)
+                : input.media.kind === 'video'
+                  ? ('video' as const)
+                  : ('image' as const),
             media_storage_path: input.media.storagePath,
             media_mime: input.media.mime,
           }

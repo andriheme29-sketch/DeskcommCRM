@@ -655,7 +655,28 @@ export function AgentForm(props: Props) {
     if (!isEdit || !props.draft) return;
     setPublishing(true);
     try {
-      const res = await publishAgentAction(props.agent.id, props.draft.id);
+      // Publicar sem salvar publicava `props.draft` — o rascunho ANTIGO. Trocar
+      // o número na tela e clicar em Publicar levava o número velho ao ar, com
+      // o formulário mostrando o novo. Persistir primeiro é o que faz o que
+      // está na tela ser o que é publicado; a mesma régua de cadastro do
+      // `handleSave` (agentMcpPatchSchema) vale aqui pelo mesmo motivo.
+      const cadastro = agentMcpPatchSchema.safeParse(toCadastroPayload(form));
+      if (!cadastro.success) {
+        toast.error(t("Validação falhou."));
+        return;
+      }
+      const saved = await saveAgentDraftAction(
+        props.agent.id,
+        toVersionPayload(form),
+        cadastro.data,
+      );
+      if (!saved.ok) {
+        toast.error(saved.message ?? `${t("Erro")}: ${saved.error}`);
+        return;
+      }
+      // O id que acabou de ser gravado, nunca `props.draft.id` (que o
+      // `router.refresh()` do save ainda não atualizou nesta closure).
+      const res = await publishAgentAction(props.agent.id, saved.data!.version_id);
       if (!res.ok) {
         toast.error(`${t("Falha ao publicar:")} ${res.error}`);
         return;
