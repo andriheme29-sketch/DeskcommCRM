@@ -81,7 +81,7 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<Response> {
   // (catálogo evolui — validar à hora do publish, fora da transação SQL.)
   const { data: targetV } = await admin
     .from("ai_agent_versions")
-    .select("id, agent_id, organization_id, tool_ids, status")
+    .select("id, agent_id, organization_id, tool_ids, status, channel_session_id")
     .eq("id", parsed.data.version_id)
     .eq("organization_id", organizationId)
     .maybeSingle();
@@ -97,6 +97,40 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<Response> {
       requestId,
       details: { invalid },
     });
+  }
+
+  // O NÚMERO JÁ TEM DONO? Um `channel_session_id` é um recurso único: dois
+  // agentes publicados NELE nunca é o que se quer — o turno elege um dos dois
+  // por `priority`/`created_at` (`agente-da-conversa.ts`), sem ninguém ter
+  // escolhido. Trocar de agente num número é operação legítima, e por isso não
+  // é proibida: exige CONFIRMAÇÃO explícita (`confirmar_troca_numero`), que é o
+  // que separa "eu quis" de "eu não vi que este número estava ocupado".
+  //
+  // A consulta só olha o ponteiro VIGENTE (`published_version_id`) e o status
+  // `published` — rascunho em outro agente não ocupa nada.
+  if (targetV.channel_session_id !== null && parsed.data.confirmar_troca_numero !== true) {
+    const { data: ocupantes, error: ocupantesErr } = await admin
+      .from("ai_agents")
+      .select("id, ai_agent_versions!ai_agents_published_version_id_fkey!inner(channel_session_id, status)")
+      .eq("organization_id", organizationId)
+      .neq("id", id)
+      .is("archived_at", null)
+      .eq("ai_agent_versions.channel_session_id", targetV.channel_session_id)
+      .eq("ai_agent_versions.status", "published");
+
+    if (ocupantesErr) {
+      return fail("internal_error", t("Erro ao verificar o número."), 500, { requestId });
+    }
+    if ((ocupantes?.length ?? 0) > 0) {
+      return fail(
+        "channel_session_already_taken",
+        t(
+          "Este número já tem outro agente publicado. Confirme a troca para publicar este no lugar dele.",
+        ),
+        422,
+        { requestId, details: { agentes: ocupantes?.map((o) => o.id) ?? [] } },
+      );
+    }
   }
 
   const result = await publishAgentVersion(admin, {

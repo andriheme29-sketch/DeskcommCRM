@@ -330,7 +330,21 @@ export const agentMcpPatchSchema = z
   })
   .strict();
 
-export const publishSchema = z.object({ version_id: UUID }).strict();
+export const publishSchema = z
+  .object({
+    version_id: UUID,
+    /**
+     * `true` = a pessoa confirmou na tela que este número vai TROCAR de agente.
+     *
+     * O número é um recurso escasso e único: dois agentes publicados na MESMA
+     * `channel_session_id` nunca é o que se quer (o turno elege um deles por
+     * `priority`/`created_at`, sem que ninguém tenha escolhido). Publicar o
+     * segundo só passa com esta confirmação explícita — o servidor recusa com
+     * `channel_session_already_taken` sem ela. Ver a guarda na rota de publish.
+     */
+    confirmar_troca_numero: z.boolean().optional(),
+  })
+  .strict();
 
 export const testRunSchema = z
   .object({

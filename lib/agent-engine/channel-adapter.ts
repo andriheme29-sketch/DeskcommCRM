@@ -50,7 +50,7 @@ export interface ChannelSendInput {
    * que é o único uso que existia (`agent/fotos-do-produto.ts`). Quem fala é o
    * `agent/audio-do-turno.ts`.
    */
-  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' };
+  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' };
 }
 
 /**

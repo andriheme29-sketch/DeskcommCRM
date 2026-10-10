@@ -35,6 +35,7 @@ import { currentExecutionBoundary, guardServiceEffect } from '@/lib/atendimento/
  * main.ts não completa nem re-tenta). PII nunca entra em log/erro de job.
  */
 import type pg from 'pg';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { auxModelArgs, type AuxModelArgs } from './aux-model-args';
 import type { ChannelAdapter, ChannelSendResult } from '../channel-adapter';
@@ -89,6 +90,7 @@ import {
 import { sintetizarVoz, type ConfigDaVoz, type ProvedorDeVoz } from '@/lib/tts';
 import { resolverVozDoTurno } from '@/lib/tts/resolver';
 import { decidirModalidadeDeVoz, type ModoDeVoz } from './voz-do-turno';
+import { renderImcPng } from './print-do-imc';
 import { loadEnv } from '../env';
 import { enqueueJob, rescheduleJob, type JobRow, type Queryable } from '../queue/queue';
 import {
@@ -281,6 +283,8 @@ export const AGENT_TOOL_DEFS = {
             'etapas em que a operação pediu voz. Se a instalação não tiver voz configurada, ou ' +
             'se a síntese falhar, a MESMA mensagem sai em TEXTO: o lead nunca fica sem resposta.',
         ),
+      peso_kg: z.number().optional().describe('peso do cliente em kg, quando ele informar'),
+      altura_cm: z.number().optional().describe('altura do cliente em cm, quando ele informar'),
     }),
   },
   update_lead_state: {
@@ -3231,7 +3235,7 @@ async function executarTurnoDoAgente(
     }),
     send_message: tool({
       ...AGENT_TOOL_DEFS.send_message,
-      execute: async ({ body: corpoDoModelo, produto_codigo, enviar_como_audio }) => {
+      execute: async ({ body: corpoDoModelo, produto_codigo, enviar_como_audio, peso_kg, altura_cm }) => {
         tentativasDeEnvio += 1;
         // O texto sai no formato do WhatsApp — sem `\n` literal nem
         // `**negrito**` de Markdown na tela do cliente. Antes de qualquer gate,
@@ -3354,6 +3358,29 @@ async function executarTurnoDoAgente(
           }
           fotosDoProduto = preparadas.fotos;
           fotosQueFaltaram = preparadas.tinha - preparadas.fotos.length;
+        }
+        // O PRINT DO IMC. O cliente informou peso e altura: em vez de repetir os
+        // números em texto, o turno desenha o "print" (com a faixa da OMS) e
+        // manda como imagem. Renderizar e subir são rede, e por isso acontecem
+        // aqui — ANTES da cadeia e FORA do lock do número (#654), como a foto e
+        // a voz. Falha em qualquer passo NÃO derruba o turno: a mensagem segue
+        // no envio normal de texto, que é o que o modelo escreveu de qualquer
+        // forma.
+        let printDoImc: string | null = null;
+        if (peso_kg != null && altura_cm != null && !preview) {
+          try {
+            const png = await renderImcPng(peso_kg, altura_cm);
+            const destino = `${tenantId}/${input.conversationId}/imc-${randomUUID()}.png`;
+            const { error } = await createAdminClient()
+              .storage.from('whatsapp-media')
+              .upload(destino, png, { contentType: 'image/png', upsert: true });
+            if (error) throw new Error(error.message);
+            printDoImc = destino;
+          } catch (err) {
+            runLog.warn('print do IMC não saiu — a mensagem segue em texto', {
+              motivo: err instanceof Error ? err.name : 'erro_desconhecido',
+            });
+          }
         }
         // A VOZ DA MENSAGEM (TTS). Sintetizada e subida ANTES da cadeia de
         // guardrails e FORA do lock do número — pelo mesmo motivo da foto (#654):
@@ -3657,7 +3684,7 @@ async function executarTurnoDoAgente(
                 Math.floor(Math.random() * (pacingDoTurno?.knobs.jitterMaxMs ?? 800));
               const enviar = (
                 corpo: string,
-                media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' },
+                media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' },
               ): Promise<ChannelSendResult> => {
                 seq += 1;
                 return liveChannel().send({
@@ -3673,6 +3700,17 @@ async function executarTurnoDoAgente(
                 });
               };
               try {
+                // O PRINT DO IMC é uma mensagem física como a foto: sai com o
+                // `finalBody` como legenda (ou sem legenda, se o texto ficou
+                // vazio) e não passa pelo fatiamento de bolhas — uma imagem não
+                // se fatia. Só aqui dentro: é o `finalBody` pós-cadeia que vai.
+                if (printDoImc !== null) {
+                  return await enviar(finalBody, {
+                    storagePath: printDoImc,
+                    mime: 'image/png',
+                    kind: 'image',
+                  });
+                }
                 // NOTA DE VOZ — uma mensagem física só, sem fatiamento: não se
                 // fatia um áudio em bolhas. A condição `finalBody === body` é a
                 // regra dura que impede a única mentira possível desta feature: a
