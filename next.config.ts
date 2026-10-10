@@ -49,6 +49,22 @@ const nextConfig: NextConfig = {
    * reembala isso na mensagem genérica de "só imagens escaneadas" — o
    * operador não tinha como saber que o problema era o build, não o arquivo.
    */
+  /**
+   * `@resvg/resvg-js` é o mesmo caso do `@napi-rs/canvas`, e por isso o
+   * tratamento é o mesmo — mas com um sintoma mais barulhento.
+   *
+   * O pacote carrega um binário nativo (`.node` por plataforma) e o resolve por
+   * `require()` computado em `js-binding.js` (switch em `process.platform`/arch,
+   * com `isMusl()`). O Turbopack, ao montar o chunk de servidor da rota que
+   * alcança `lib/agent-engine/agent/print-do-imc.ts`, tenta EMPACOTAR esse
+   * `js-binding.js` e morre na emissão com `non-ecmascript placeable asset` —
+   * `.node` não tem module id, não é posicionável em chunk ESM. É falha de
+   * BUILD, não de runtime: a imagem não é publicada.
+   *
+   * A correção é tirar o pacote do bundle: o Next o deixa como `require()` de
+   * runtime, o Turbopack não visita o arquivo, e o binário é lido do disco.
+   */
+  serverExternalPackages: ["@resvg/resvg-js"],
   outputFileTracingIncludes: {
     "/**": [
       "./node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**",
@@ -70,6 +86,17 @@ const nextConfig: NextConfig = {
       "./node_modules/.pnpm/@napi-rs+canvas-*/node_modules/@napi-rs/*/*.node",
       // pdfjs-dist em si (ver comentário acima).
       "./node_modules/.pnpm/pdfjs-dist@*/node_modules/pdfjs-dist/**",
+      // @resvg/resvg-js — binário nativo, mesmo tratamento (e mesmo motivo de
+      // serem DOIS padrões) do @napi-rs/canvas acima: dentro de `@resvg/` o
+      // pnpm põe, ao lado do pacote real, um SYMLINK por plataforma
+      // (`resvg-js-linux-x64-gnu` -> `../../../@resvg+resvg-js-linux-x64-gnu@…`),
+      // e um glob que agregue `@resvg/**` casa o symlink e mata o build com
+      // `Is a directory (os error 21)`. O primeiro padrão leva o pacote que
+      // contém o `js-binding.js`; o segundo, o binário `.node` — que o
+      // `js-binding.js` só alcança pelo `require("@resvg/resvg-js-linux-x64-gnu")`
+      // computado em runtime, invisível para o tracer.
+      "./node_modules/.pnpm/@resvg+resvg-js@*/node_modules/@resvg/resvg-js/**",
+      "./node_modules/.pnpm/@resvg+resvg-js-linux-*/node_modules/@resvg/*/*.node",
     ],
   },
   reactStrictMode: true,
