@@ -368,14 +368,17 @@ export function createPgAdminClient(pool: pg.Pool): TurnBridgeAdminClient {
          order by updated_at desc limit 1`,
         [orgId, contactId],
       );
-      const { rows: contacts } = await pool.query<{ name: string | null }>(
-        `select name from contacts where organization_id = $1 and id = $2`,
+      const { rows: contacts } = await pool.query<{ name: string | null; tags: string[] | null }>(
+        `select name, tags from contacts where organization_id = $1 and id = $2`,
         [orgId, contactId],
       );
       const lead = leads[0];
       return {
         lead_stage: lead?.stage_id ?? null,
-        tags: lead?.tags ?? [],
+        // A guarda de marca dos fluxos por etapa (nó `condition`, campo `tag`) lê a tag que vive no
+        // CONTATO — mesma primitiva do `segments` do silence-sweep, que também é `contacts.tags`.
+        // Sem a união a guarda nunca casa e o fluxo termina calado em `fim-outra-marca`.
+        tags: [...(lead?.tags ?? []), ...(contacts[0]?.tags ?? [])],
         contact_name: contacts[0]?.name ?? null,
         custom_fields: lead?.custom_fields ?? {},
       };

@@ -1088,7 +1088,7 @@ export function createSupabaseAdminClient(admin: SupabaseClient): AdminClient {
           .order("updated_at", { ascending: false })
           .limit(1)
           .maybeSingle(),
-        admin.from("contacts").select("name").eq("organization_id", orgId).eq("id", contactId).maybeSingle(),
+        admin.from("contacts").select("name, tags").eq("organization_id", orgId).eq("id", contactId).maybeSingle(),
       ]);
       if (leadErr) throw new Error(leadErr.message);
       if (contactErr) throw new Error(contactErr.message);
@@ -1098,7 +1098,10 @@ export function createSupabaseAdminClient(admin: SupabaseClient): AdminClient {
           : {};
       return {
         lead_stage: lead?.stage_id ?? null,
-        tags: lead?.tags ?? [],
+        // A guarda de marca dos fluxos por etapa (nó `condition`, campo `tag`) lê a tag que vive no
+        // CONTATO — mesma primitiva do `segments` do silence-sweep, que também é `contacts.tags`.
+        // Sem a união a guarda nunca casa e o fluxo termina calado em `fim-outra-marca`.
+        tags: [...(lead?.tags ?? []), ...((contact as { tags?: string[] } | null)?.tags ?? [])],
         contact_name: contact?.name ?? null,
         custom_fields: custom,
       };

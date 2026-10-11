@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { completeTurnForEnrollment, createPgAdminClient, type TurnBridgeAdminClient } from "./turn-bridge";
-import type { EnrollmentRow } from "./node-handlers";
-import type { FlowGraph } from "./graph-schema";
+import { processNode, type EnrollmentRow } from "./node-handlers";
+import type { FlowEdge, FlowGraph, FlowNode } from "./graph-schema";
 
 const NOW = new Date("2026-07-22T12:00:00.000Z");
 const clock = () => NOW;
@@ -403,4 +403,107 @@ it("adapter PG preserva provenance e leitor de inbound filtra a conversa solicit
   const [sql, values] = query.mock.calls.at(-1)! as unknown as [string, unknown[]];
   expect(sql).toMatch(/conversation_id\s*=\s*\$3/);
   expect(values[2]).toBe("conv-1");
+});
+
+// ---------------------------------------------------------------------------
+// `loadLeadFacts` — a UNIÃO das tags do LEAD com as do CONTATO.
+//
+// A guarda de marca dos fluxos por etapa (nó `condition`, campo `tag`) lê a tag
+// que vive no CONTATO. Antes da união o motor só enxergava `crm_leads.tags`, a
+// guarda nunca casava e o fluxo terminava calado em `fim-outra-marca`.
+// ---------------------------------------------------------------------------
+
+/** `query` mockado que ramifica por substring do SQL — o mesmo estilo do teste acima. */
+function pgQueryMock(handlers: Array<[string, unknown[]]>): ReturnType<typeof vi.fn> {
+  return vi.fn(async (sql: string) => {
+    const hit = handlers.find(([frag]) => sql.includes(frag));
+    return { rows: hit ? hit[1] : [] };
+  });
+}
+
+describe("adapter PG — loadLeadFacts une as tags do lead e do contato", () => {
+  it("tag que vive no CONTATO entra no resultado junto com a do lead", async () => {
+    const query = pgQueryMock([
+      ["from crm_leads", [{ stage_id: null, tags: ["vip"], custom_fields: {} }]],
+      ["from contacts", [{ name: "Ana", tags: ["hidraliso"] }]],
+    ]);
+    const db = createPgAdminClient({ query } as unknown as Parameters<typeof createPgAdminClient>[0]);
+
+    const facts = await db.loadLeadFacts("org-1", "contact-1");
+
+    expect(facts.tags).toEqual(expect.arrayContaining(["vip", "hidraliso"]));
+    expect(facts.tags).toEqual(["vip", "hidraliso"]);
+    expect(facts).toMatchObject({ contact_name: "Ana", lead_stage: null });
+  });
+
+  it("contato sem tags (null) não quebra: fica só a tag do lead", async () => {
+    const query = pgQueryMock([
+      ["from crm_leads", [{ stage_id: null, tags: ["vip"], custom_fields: {} }]],
+      ["from contacts", [{ name: "Ana", tags: null }]],
+    ]);
+    const db = createPgAdminClient({ query } as unknown as Parameters<typeof createPgAdminClient>[0]);
+
+    const facts = await db.loadLeadFacts("org-1", "contact-1");
+
+    expect(facts.tags).toEqual(["vip"]);
+  });
+
+  it("lead sem tags e contato com tag: fica só a do contato", async () => {
+    const query = pgQueryMock([
+      ["from crm_leads", [{ stage_id: "st-1", tags: null, custom_fields: {} }]],
+      ["from contacts", [{ name: "Ana", tags: ["hidraliso"] }]],
+    ]);
+    const db = createPgAdminClient({ query } as unknown as Parameters<typeof createPgAdminClient>[0]);
+
+    const facts = await db.loadLeadFacts("org-1", "contact-1");
+
+    expect(facts.tags).toEqual(["hidraliso"]);
+  });
+});
+
+describe("guarda de marca casa quando a tag vive no contato", () => {
+  const edges: FlowEdge[] = [
+    { id: "c1-sim", source: "c1", target: "sim", priority: 0, condition: { type: "cond_result", value: true } },
+    { id: "c1-nao", source: "c1", target: "nao", priority: 0, condition: { type: "cond_result", value: false } },
+  ];
+  const node: FlowNode = {
+    id: "c1",
+    type: "condition",
+    label: "Marca",
+    position: { x: 0, y: 0 },
+    config: { combinator: "and", checks: [{ field: "tag", op: "contains", value: "hidraliso" }] },
+  };
+
+  it("roteia para a aresta 'sim' quando a tag veio do CONTATO (união do loadLeadFacts)", async () => {
+    // O `loadLeadFacts` REAL do adapter PG, alimentado pelo mock: a tag só existe
+    // em `contacts.tags`, que é onde a guarda de marca a escreve.
+    const query = pgQueryMock([
+      ["from crm_leads", [{ stage_id: null, tags: ["vip"], custom_fields: {} }]],
+      ["from contacts", [{ name: "Ana", tags: ["hidraliso"] }]],
+    ]);
+    const db = createPgAdminClient({ query } as unknown as Parameters<typeof createPgAdminClient>[0]);
+    const facts = await db.loadLeadFacts("org-1", "contact-1");
+
+    const result = processNode({
+      node,
+      edges,
+      enrollment: enrollment({ current_node_id: "c1" }),
+      lead: { lead_stage: facts.lead_stage, tags: facts.tags, steps_taken: 0, last_outcome: null },
+      clock,
+    });
+
+    expect(result).toMatchObject({ kind: "advance", next_node_id: "sim" });
+  });
+
+  it("CONTROLE: sem a união (só crm_leads.tags) a guarda NÃO casa — vai para 'nao'", () => {
+    const result = processNode({
+      node,
+      edges,
+      enrollment: enrollment({ current_node_id: "c1" }),
+      lead: { lead_stage: null, tags: ["vip"], steps_taken: 0, last_outcome: null },
+      clock,
+    });
+
+    expect(result).toMatchObject({ kind: "advance", next_node_id: "nao" });
+  });
 });
