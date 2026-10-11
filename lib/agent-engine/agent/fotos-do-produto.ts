@@ -52,17 +52,25 @@ export interface FotoParaEnvio {
  * degrada para só texto nem se aprova com a mídia pendente.
  */
 export interface MidiaPreparada {
-  /** O `produto_codigo` da resposta — o mesmo `codigo` que `crm_search_products` devolve. */
+  /**
+   * O código da mídia: `produto_codigo` (foto) ou `video_codigo` (vídeo). É o
+   * mesmo `codigo` que `crm_search_products` (produto) ou o roteiro (vídeo) usa.
+   */
   codigo: string;
-  /** O produto foi achado ATIVO no catálogo da organização. */
+  /**
+   * A NATUREZA da mídia. Ausente = `foto` (o caso histórico, #2490): manter o
+   * default preserva todo registro já gravado/testado que só conhecia foto.
+   */
+  tipo?: 'foto' | 'video';
+  /** A mídia foi achada na organização (produto ATIVO, ou vídeo cadastrado). */
   produtoResolvido: boolean;
-  /** Fotos cadastradas do produto (as que o envio real veria). */
+  /** Fotos/arquivos cadastrados (o que o envio real veria). */
   fotosCadastradas: number;
-  /** Fotos que a preparação deixou prontas. */
+  /** Fotos/arquivos que a preparação deixou prontos. */
   fotosPreparadas: number;
   /** Os anexos previstos, no formato que o envio real montaria. */
   anexos: FotoParaEnvio[];
-  /** Presente = falha explícita: código sem produto, ou foto que não copiou. */
+  /** Presente = falha explícita: código sem mídia. */
   falha?: { code: string; message: string };
 }
 

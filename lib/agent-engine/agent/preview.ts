@@ -27,6 +27,7 @@ import { getToolByName } from '@/lib/mcp/tools';
 import type { Logger } from '../obs/logger';
 import type { Citation } from '@/lib/ai/citations/types';
 import type { FotosPreparadas, MidiaPreparada } from './fotos-do-produto';
+import type { VideoPreparado } from './videos-do-catalogo';
 
 export interface TurnPreview {
   kind: 'sandbox' | 'assisted';
@@ -219,6 +220,7 @@ async function prepararMidiaNoDryRun(
 ): Promise<MidiaPreparada> {
   const semProduto = (falha: { code: string; message: string }): MidiaPreparada => ({
     codigo,
+    tipo: 'foto',
     produtoResolvido: false,
     fotosCadastradas: 0,
     fotosPreparadas: 0,
@@ -236,6 +238,7 @@ async function prepararMidiaNoDryRun(
   if (!preparadas.ok) return semProduto({ code: preparadas.code, message: preparadas.message });
   const registro: MidiaPreparada = {
     codigo,
+    tipo: 'foto',
     produtoResolvido: true,
     fotosCadastradas: preparadas.tinha,
     fotosPreparadas: preparadas.fotos.length,
@@ -249,6 +252,56 @@ async function prepararMidiaNoDryRun(
         `${faltaram} foto(s) do produto ${JSON.stringify(codigo)} não puderam ser preparadas no ` +
         'teste. Em produção o texto sairia sem elas; aqui o teste falha de propósito, para o ' +
         'problema não chegar só no atendimento real.',
+    };
+  return registro;
+}
+/**
+ * A MESMA preparação de vídeo do envio real, dentro do dry-run (#0613). Molde de
+ * `prepararMidiaNoDryRun`: o desfecho vira vocabulário do teste.
+ *
+ * - código sem mídia cadastrada → `falha` (teste VERMELHO);
+ * - vídeo que não copiou → `falha` aqui (o envio real degrada para só texto, o
+ *   teste não pode fingir que passou);
+ * - sem `preparar` injetado → também `falha`: vídeo que ninguém preparou não
+ *   pode atravessar o teste como se tivesse sido validado.
+ */
+async function prepararVideoNoDryRun(
+  preparar: ((codigo: string) => Promise<VideoPreparado>) | undefined,
+  codigo: string,
+): Promise<MidiaPreparada> {
+  const semVideo = (falha: { code: string; message: string }): MidiaPreparada => ({
+    codigo,
+    tipo: 'video',
+    produtoResolvido: false,
+    fotosCadastradas: 0,
+    fotosPreparadas: 0,
+    anexos: [],
+    falha,
+  });
+  if (!preparar)
+    return semVideo({
+      code: 'midia_nao_preparada',
+      message:
+        'A mídia desta resposta não foi preparada no teste — não há como afirmar que o vídeo ' +
+        'sairia no envio real. Corrija a preparação e execute o teste de novo.',
+    });
+  const preparado = await preparar(codigo);
+  if (!preparado.ok) return semVideo({ code: preparado.code, message: preparado.message });
+  const registro: MidiaPreparada = {
+    codigo,
+    tipo: 'video',
+    produtoResolvido: true,
+    fotosCadastradas: 1,
+    fotosPreparadas: preparado.video ? 1 : 0,
+    anexos: preparado.video ? [preparado.video] : [],
+  };
+  if (!preparado.video)
+    registro.falha = {
+      code: 'midia_nao_preparada',
+      message:
+        `O vídeo ${JSON.stringify(codigo)} não pôde ser preparado no teste. Em produção o texto ` +
+        'sairia sem ele; aqui o teste falha de propósito, para o problema não chegar só no ' +
+        'atendimento real.',
     };
   return registro;
 }
@@ -266,6 +319,11 @@ export function applyPreviewPolicy(
    * teste falha a mídia em vez de aprovar texto com foto pendente.
    */
   prepararMidia?: (codigo: string) => Promise<FotosPreparadas>,
+  /**
+   * #2490/#0613 — a `prepararVideoDoCatalogo` do caminho de produção, injetada
+   * pelo turno. Sem ela o `video_codigo` NÃO passa, pelo mesmo motivo da foto.
+   */
+  prepararVideo?: (codigo: string) => Promise<VideoPreparado>,
 ): ToolSet {
   return Object.fromEntries(
     Object.entries(tools).map(([name, definition]) => {
@@ -325,6 +383,26 @@ export function applyPreviewPolicy(
                       `O produto ${JSON.stringify(midia.codigo)} não tem fotos cadastradas: ` +
                       'nenhuma imagem seria enviada no envio real — só o texto.',
                   });
+              }
+              // #0613 — o VÍDEO DE MARCA pelo MESMO caminho do envio real: o
+              // `video_codigo` resolve a mídia e deixa o arquivo pronto. Sem
+              // `prepararVideo` injetado o teste falha a mídia, como a foto.
+              const videoCodigo =
+                args && typeof args === 'object' && 'video_codigo' in args
+                  ? typeof args.video_codigo === 'string'
+                    ? args.video_codigo
+                    : undefined
+                  : undefined;
+              if (videoCodigo !== undefined && videoCodigo.trim() !== '') {
+                const midia = await prepararVideoNoDryRun(prepararVideo, videoCodigo);
+                p.result.midia.push(midia);
+                if (midia.falha) {
+                  p.result.impediments.push({ code: midia.falha.code, message: midia.falha.message });
+                  return {
+                    ok: false,
+                    error: { code: midia.falha.code, message: midia.falha.message },
+                  };
+                }
               }
               const avisos: Array<{ code: string; message: string }> = [];
               const result = evaluateBeforeSend(

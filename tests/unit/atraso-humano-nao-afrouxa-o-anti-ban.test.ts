@@ -166,7 +166,10 @@ describe("fiação — a espera humana é paga UMA vez por turno", () => {
     // 3400: desde a nota de voz (5870e0953) o `send` cresceu com o bloco do áudio
     // (síntese, degradação e o envio do arquivo) antes das bolhas — o `sendInBubbles`
     // segue no MESMO callback, só mais abaixo.
-    const janela = FONTE_INBOUND.slice(i, i + 3400);
+    // 4600: desde o vídeo de marca (0613) o `send` ganhou mais um ramo de mídia
+    // física (a cópia do vídeo e o envio) — como o do IMC e o do áudio antes dele,
+    // o `sendInBubbles` segue no MESMO callback, só mais abaixo.
+    const janela = FONTE_INBOUND.slice(i, i + 4600);
     // Os dois convivem: o jitter é throttle anti-ban entre mensagens físicas, o
     // atraso humano é a pausa do turno. Perder o primeiro é afrouxar o anti-ban.
     // Desde a 0499 o jitter LÊ os knobs da conexão (throttleMs + jitterMaxMs,

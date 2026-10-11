@@ -81,6 +81,11 @@ import {
   type FotoParaEnvio,
 } from './fotos-do-produto';
 import {
+  copiarVideoNoStorage,
+  prepararVideoDoCatalogo,
+  type VideoParaEnvio,
+} from './videos-do-catalogo';
+import {
   esperaDoAudio,
   prepararAudioDoTurno,
   subirAudioNoStorage,
@@ -273,6 +278,14 @@ export const AGENT_TOOL_DEFS = {
         .describe(
           'código de um produto do catálogo (o `codigo` de crm_search_products) que tem `fotos`: ' +
             'as fotos dele vão junto, e o texto vira a legenda da primeira',
+        ),
+      video_codigo: z
+        .string()
+        .optional()
+        .describe(
+          'código de uma MÍDIA de vídeo do catálogo (ex.: `depoimento`, `logistica`): o vídeo ' +
+            'dela vai junto como anexo, e o texto vira a legenda. Use o código que o roteiro ' +
+            'indicar na etapa de mídia. Não se combina com foto nem com áudio.',
         ),
       enviar_como_audio: z
         .boolean()
@@ -3235,7 +3248,7 @@ async function executarTurnoDoAgente(
     }),
     send_message: tool({
       ...AGENT_TOOL_DEFS.send_message,
-      execute: async ({ body: corpoDoModelo, produto_codigo, enviar_como_audio, peso_kg, altura_cm }) => {
+      execute: async ({ body: corpoDoModelo, produto_codigo, video_codigo, enviar_como_audio, peso_kg, altura_cm }) => {
         tentativasDeEnvio += 1;
         // O texto sai no formato do WhatsApp — sem `\n` literal nem
         // `**negrito**` de Markdown na tela do cliente. Antes de qualquer gate,
@@ -3326,22 +3339,33 @@ async function executarTurnoDoAgente(
         // fora do lock do número — a cópia no Storage é rede. Código errado volta
         // ao modelo sem enviar nada; foto que não copiou sai do envio e o texto
         // segue (degradar para só texto). Ver `agent/fotos-do-produto.ts`.
-        // Áudio e foto não vão juntos: uma nota de voz não carrega álbum, e
-        // aceitar os dois em silêncio descartaria as fotos sem ninguém ver. Volta
-        // ao modelo como erro de ENSINO — ele escolhe um dos dois e chama de novo.
-        if (
-          enviar_como_audio === true &&
-          produto_codigo !== undefined &&
-          produto_codigo.trim() !== ''
-        ) {
+        // Áudio, foto e vídeo não vão juntos: uma nota de voz não carrega álbum,
+        // e o vídeo é uma mensagem física só. Aceitar combinações em silêncio
+        // descartaria uma das mídias sem ninguém ver. Volta ao modelo como erro
+        // de ENSINO — ele escolhe um caminho e chama de novo.
+        const pediuFoto = produto_codigo !== undefined && produto_codigo.trim() !== '';
+        const pediuVideo = video_codigo !== undefined && video_codigo.trim() !== '';
+        if (enviar_como_audio === true && (pediuFoto || pediuVideo)) {
           return {
             ok: false,
             error: {
-              code: 'audio_ou_foto',
+              code: 'audio_ou_midia',
               message:
-                'Esta chamada pediu áudio E fotos do produto ao mesmo tempo. Escolha UM caminho: ' +
-                'chame send_message só com `enviar_como_audio: true` para a nota de voz, ou só com ' +
-                '`produto_codigo` para as fotos.',
+                'Esta chamada pediu áudio E mídia (foto/vídeo) ao mesmo tempo. Escolha UM caminho: ' +
+                'chame send_message só com `enviar_como_audio: true` para a nota de voz, só com ' +
+                '`produto_codigo` para as fotos, ou só com `video_codigo` para o vídeo.',
+            },
+          };
+        }
+        if (pediuFoto && pediuVideo) {
+          return {
+            ok: false,
+            error: {
+              code: 'foto_ou_video',
+              message:
+                'Esta chamada pediu foto E vídeo ao mesmo tempo. Escolha UM caminho: chame ' +
+                'send_message só com `produto_codigo` para as fotos, ou só com `video_codigo` ' +
+                'para o vídeo.',
             },
           };
         }
@@ -3358,6 +3382,22 @@ async function executarTurnoDoAgente(
           }
           fotosDoProduto = preparadas.fotos;
           fotosQueFaltaram = preparadas.tinha - preparadas.fotos.length;
+        }
+        // O VÍDEO DE MARCA (depoimento, logística): preparado ANTES da cadeia e
+        // fora do lock do número — a cópia no Storage é rede. Código sem mídia
+        // volta ao modelo sem enviar nada; vídeo que não copiou vira `null` e o
+        // texto segue (degradar para só texto). Ver `agent/videos-do-catalogo.ts`.
+        let videoDoCatalogo: VideoParaEnvio | null = null;
+        if (pediuVideo && !preview) {
+          const preparado = await prepararVideoDoCatalogo(pool, copiarVideoNoStorage(runLog), {
+            tenantId,
+            conversationId: input.conversationId,
+            codigo: video_codigo as string,
+          });
+          if (!preparado.ok) {
+            return { ok: false, error: { code: preparado.code, message: preparado.message } };
+          }
+          videoDoCatalogo = preparado.video;
         }
         // O PRINT DO IMC. O cliente informou peso e altura: em vez de repetir os
         // números em texto, o turno desenha o "print" (com a faixa da OMS) e
@@ -3727,6 +3767,16 @@ async function executarTurnoDoAgente(
                 if (audioDaVoz !== null) {
                   runLog.warn('áudio descartado — a cadeia emendou o corpo; a mensagem sai em texto', {
                     job_id: liveJob().id,
+                  });
+                }
+                // VÍDEO DE MARCA — uma mensagem física só, sem fatiamento: um
+                // vídeo não se fatia em bolhas. Sai com o `finalBody` como
+                // legenda; o vídeo é a mensagem, o texto acompanha.
+                if (videoDoCatalogo !== null) {
+                  return await enviar(finalBody, {
+                    storagePath: videoDoCatalogo.storagePath,
+                    mime: videoDoCatalogo.mime,
+                    kind: 'video',
                   });
                 }
                 // Cada foto é uma mensagem física: só vão as que cabem no que resta do teto
@@ -4571,6 +4621,15 @@ async function executarTurnoDoAgente(
             // Nada é enviado: o `send_message` da prévia nem chega perto do canal.
             (codigo: string) =>
               prepararFotosDoProduto(pool, copiarFotoNoStorage(runLog), {
+                tenantId,
+                conversationId: PASTA_DE_TESTE_DE_MIDIA,
+                codigo,
+              }),
+            // #0613 — a MESMA `prepararVideoDoCatalogo` do caminho de produção,
+            // com o MESMO destino de teste (`dry-run`): a prévia resolve a mídia
+            // e deixa a cópia pronta, mas nada sai pelo canal.
+            (codigo: string) =>
+              prepararVideoDoCatalogo(pool, copiarVideoNoStorage(runLog), {
                 tenantId,
                 conversationId: PASTA_DE_TESTE_DE_MIDIA,
                 codigo,

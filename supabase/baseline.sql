@@ -49154,6 +49154,70 @@ on conflict (id) do update
       file_size_limit    = excluded.file_size_limit,
       allowed_mime_types = excluded.allowed_mime_types;
 
+-- ---- o agente manda VÍDEO de marca (migration 0613) ----
+-- Mídias de marca por PAPEL (depoimento, logística), não por SKU: o prompt usa
+-- `video_codigo`, estável entre deploys. Caminhos em storage/catalog-video
+-- (<org>/<uuid>.mp4); bucket privado, 50 MB, só video/mp4. Racional inteiro na
+-- migration 0613.
+create table if not exists public.catalog_media (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  codigo text not null,
+  tipo text not null default 'video',
+  nome text,
+  storage_path text not null,
+  mime text not null default 'video/mp4',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.catalog_media
+  drop constraint if exists catalog_media_tipo_valido;
+alter table public.catalog_media
+  add constraint catalog_media_tipo_valido check (tipo in ('video'));
+alter table public.catalog_media
+  drop constraint if exists catalog_media_codigo_forma;
+alter table public.catalog_media
+  add constraint catalog_media_codigo_forma check (codigo ~ '^[a-z0-9][a-z0-9_-]{0,63}$');
+create unique index if not exists catalog_media_org_codigo_key
+  on public.catalog_media (organization_id, codigo);
+alter table public.catalog_media enable row level security;
+drop policy if exists catalog_media_select on public.catalog_media;
+create policy catalog_media_select on public.catalog_media
+  for select using (
+    (organization_id in (select public.fn_user_org_ids())) or public.fn_is_platform_admin()
+  );
+drop policy if exists catalog_media_write on public.catalog_media;
+create policy catalog_media_write on public.catalog_media
+  for all using (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  )
+  with check (
+    public.fn_is_platform_admin()
+    or ((organization_id in (select public.fn_user_org_ids()))
+        and public.fn_role_at_least(organization_id, 'manager'))
+  );
+revoke all on public.catalog_media from anon;
+grant select, insert, update, delete on public.catalog_media to authenticated;
+grant all on public.catalog_media to service_role;
+drop trigger if exists trg_catalog_media_updated_at on public.catalog_media;
+create trigger trg_catalog_media_updated_at
+  before update on public.catalog_media
+  for each row execute function public.fn_set_updated_at();
+comment on table public.catalog_media is
+  'Mídias de marca do catálogo (hoje: vídeo) que o agente de IA manda por papel/código — ex.: depoimento (prova social) e logistica (entrega). Distinto das fotos por produto (catalog_products.fotos): aqui a identidade é o PAPEL no funil, não o SKU.';
+comment on column public.catalog_media.codigo is
+  'O papel da mídia no funil (ex.: depoimento, logistica). É o valor que o prompt usa em video_codigo; estável entre deploys — trocar o arquivo não muda o prompt.';
+comment on column public.catalog_media.storage_path is
+  'Caminho em storage/catalog-video, sempre <organization_id>/<uuid>.<ext>. A leitura por service role confere o prefixo da organização.';
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('catalog-video', 'catalog-video', false, 52428800, array['video/mp4'])
+on conflict (id) do update
+  set public             = excluded.public,
+      file_size_limit    = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
 -- ---- módulos instalados são reaplicados, depois de toda tabela do núcleo (migration 0340) ----
 --
 -- A provisionadora de cada módulo instalado roda de novo, sobre o núcleo já

@@ -144,6 +144,7 @@ describe("dry-run prepara a mídia do produto como o envio real (#2490)", () => 
     expect(p.result.midia).toEqual([
       {
         codigo: "IP15",
+        tipo: "foto",
         produtoResolvido: true,
         fotosCadastradas: 2,
         fotosPreparadas: 2,
