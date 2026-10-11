@@ -132,7 +132,7 @@ export type RaciocinioDeepseek = 'provider' | 'disabled';
  * O corpo é lido por cima do `init` que o SDK montou, então nada mais muda; um
  * `reasoning` já presente é preservado (só o `effort` é forçado a 'none').
  */
-function comRaciocinioDesligado(inner: typeof fetch): typeof fetch {
+export function comRaciocinioDesligado(inner: typeof fetch): typeof fetch {
   return (input, init) => {
     const corpo = init?.body;
     if (typeof corpo === 'string') {
@@ -350,6 +350,13 @@ export function createDefaultRegistry(opts?: {
      * cada requisição passa ANTES pela régua de destino de organização: o
      * endereço foi escolhido por uma empresa, então não aponta para a rede
      * interna do servidor (decisão 22-d).
+     *
+     * O raciocínio também é desligado aqui. O gateway à frente costuma nascer
+     * com ele LIGADO (medido no 9Router: 10,3 s e 535 tokens de saída por
+     * turno, contra 2,2 s e 33 tokens com ele desligado — ~5× a latência e ~10×
+     * os tokens). Um gateway que não conhece os campos os ignora em silêncio,
+     * então isto não quebra endpoint que não raciocina. A ordem importa: o
+     * `limpaTerminadorSse` fica por FORA e segue vendo a resposta crua.
      */
     custom: (apiKey, modelId, baseUrl) => {
       if (!baseUrl) {
@@ -360,7 +367,7 @@ export function createDefaultRegistry(opts?: {
       return createOpenAI({
         apiKey,
         baseURL: baseUrl,
-        fetch: limpaTerminadorSse(fetchParaDestinoDaOrganizacao(contain(baseUrl))),
+        fetch: comRaciocinioDesligado(limpaTerminadorSse(fetchParaDestinoDaOrganizacao(contain(baseUrl)))),
       }).chat(modelId);
     },
   };

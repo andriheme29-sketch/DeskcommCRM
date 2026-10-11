@@ -31,6 +31,7 @@ import { generateText, stepCountIs, streamText, type LanguageModel, type StopCon
 // Repetir a URL aqui criaria dois lugares para consertar quando ela mudar.
 import {
   cabecalhosDeAtribuicaoOpenRouter,
+  comRaciocinioDesligado,
   DEEPSEEK_ENDPOINT,
   OPENAI_CODEX_ENDPOINT,
   OPENROUTER_ENDPOINT,
@@ -238,7 +239,13 @@ export function buildModel(
       }
       // Endereço escolhido pela empresa: mesma régua de destino do turno do
       // agente (`providers.ts`), senão o ensaio seria a porta para a rede interna.
-      return createOpenAI({ apiKey, baseURL: baseUrl, fetch: limpaTerminadorSse(fetchParaDestinoDaOrganizacao()) }).chat(modelId);
+      // Raciocínio desligado pelo mesmo motivo do registry de produção — o
+      // ensaio tem de medir o que o turno real mede.
+      return createOpenAI({
+        apiKey,
+        baseURL: baseUrl,
+        fetch: comRaciocinioDesligado(limpaTerminadorSse(fetchParaDestinoDaOrganizacao())),
+      }).chat(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }

@@ -26,7 +26,11 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
 
-import { DEEPSEEK_ENDPOINT, REQUESTY_ENDPOINT } from "@/lib/agent-engine/edge/llm/providers";
+import {
+  comRaciocinioDesligado,
+  DEEPSEEK_ENDPOINT,
+  REQUESTY_ENDPOINT,
+} from "@/lib/agent-engine/edge/llm/providers";
 import { limpaTerminadorSse } from "@/lib/ai/providers/limpa-terminador-sse";
 import { fetchParaDestinoDaOrganizacao } from "@/lib/automation/destinos-internos-autorizados";
 import { decryptKey, byteaToBuffer } from "@/lib/crypto/aes_gcm";
@@ -834,9 +838,17 @@ function instanciar(
     // há onde ir — `null` deixa o chamador cair no padrão COM AVISO, que é o
     // contrato deste switch; inventar um endpoint seria mandar a chave do
     // gateway para outro lugar.
+    //
+    // Raciocínio desligado como no registry de produção (`providers.ts`): o
+    // gateway à frente nasce com ele ligado, e estes três pontos pagariam a
+    // mesma latência do turno do agente se não o desligassem.
     case "custom":
       return baseUrl
-        ? createOpenAI({ apiKey, baseURL: baseUrl, fetch: limpaTerminadorSse(fetchParaDestinoDaOrganizacao()) }).chat(modelId)
+        ? createOpenAI({
+            apiKey,
+            baseURL: baseUrl,
+            fetch: comRaciocinioDesligado(limpaTerminadorSse(fetchParaDestinoDaOrganizacao())),
+          }).chat(modelId)
         : null;
     default:
       return null;
