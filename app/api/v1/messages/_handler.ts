@@ -665,6 +665,11 @@ export async function sendMessageHandler(
   const corpoDoCanal = (texto: string | null): string | null =>
     aplicarAssinatura(assinatura, texto) ?? null;
 
+  // Nota de voz não carrega legenda: o `body` fica só como registro no CRM
+  // (`messages.body`), nunca vai ao canal nem vira texto solto ao lado do áudio.
+  const legendaDoCanal = (): string | null =>
+    input.type === "audio" ? null : corpoDoCanal(input.body ?? null);
+
   if (input.type === "contact") {
     const sharedId = input.metadata?.shared_contact_id;
     const inline = input.metadata?.shared_contact;
@@ -1115,7 +1120,7 @@ export async function sendMessageHandler(
             url: signed.signedUrl,
             mime: input.media_mime ?? "application/octet-stream",
             filename,
-            caption: corpoDoCanal(input.body ?? null),
+            caption: legendaDoCanal(),
           },
           // O id que a PLATAFORMA conhece, lido da linha citada agora — não uma
           // cópia guardada no envio, que poderia divergir da linha.
@@ -1141,7 +1146,7 @@ export async function sendMessageHandler(
           media: {
             url: input.media_url,
             mime: input.media_mime ?? "application/octet-stream",
-            caption: corpoDoCanal(input.body ?? null),
+            caption: legendaDoCanal(),
           },
           replyToExternalId: citada?.external_id ?? null,
         }));

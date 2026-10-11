@@ -257,6 +257,23 @@ describe("send — mídia", () => {
     expect(corpo()).toMatchObject({ attachmentType: "audio", voiceNote: true });
   });
 
+  it("áudio NÃO leva legenda — a nota de voz é só áudio", async () => {
+    // Mesmo com `caption` no envelope, o corpo não vai ao canal: numa nota de
+    // voz o texto é registro no CRM, não legenda da bolha.
+    respondeOk();
+    await zernioAdapter.send({
+      organizationId: ORG,
+      sessionRef: CREDS.accountId,
+      to: "5959",
+      providerConversationId: THREAD,
+      kind: "audio",
+      media: { ...media, mime: "audio/ogg", filename: "a.ogg", caption: "texto falado" },
+    });
+    const c = corpo();
+    expect(c).toMatchObject({ attachmentType: "audio", voiceNote: true });
+    expect(c.message).toBeUndefined();
+  });
+
   it("documento cai em file, não em image", async () => {
     respondeOk();
     await zernioAdapter.send({

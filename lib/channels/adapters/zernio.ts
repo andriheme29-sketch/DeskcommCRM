@@ -68,12 +68,19 @@ function attachmentFields(env: OutboundEnvelope): Record<string, unknown> {
       return { ...base, attachmentType: "image" };
     case "video":
       return { ...base, attachmentType: "video" };
-    case "audio":
+    case "audio": {
       // `voiceNote: true` é o que faz virar BOLHA DE VOZ. A API aceita a flag
       // mas NÃO converte: exige ogg/opus mono, igual ao canal oficial. Mandar
       // mp3 com a flag entrega anexo de música — por isso a capability declara
       // `opus-only`, e a conversão é de quem prepara a mídia, não daqui.
-      return { ...base, attachmentType: "audio", voiceNote: true };
+      // A nota de voz não leva legenda: monta sem o `message` do `base` — o
+      // texto fica só como registro no CRM, não ao lado do áudio.
+      const semLegenda: Record<string, unknown> = {
+        attachmentUrl: env.media.url,
+        ...(env.media.filename ? { attachmentName: env.media.filename } : {}),
+      };
+      return { ...semLegenda, attachmentType: "audio", voiceNote: true };
+    }
     default:
       return { ...base, attachmentType: "file" };
   }

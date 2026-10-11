@@ -101,6 +101,11 @@ export function MessageBubble({
   const time = format(new Date(message.sent_at), "HH:mm", { locale: localeDaData });
   const isFailed = message.status === "failed";
   const hasMedia = Boolean(message.media_url || message.media_storage_path);
+  // Nota de voz: o `body` é registro (fica em `messages.body`), não bolha. O
+  // player é o conteúdo — repetir o texto logo abaixo seria duplicá-lo na tela.
+  // A transcrição do áudio RECEBIDO é outra coisa e continua vindo do
+  // `MediaRenderer` (testids `rotulo-transcricao`/`transcricao-de-audio`).
+  const notaDeVoz = hasMedia && message.type === "audio";
   // A retenção marcou `metadata.media_status = 'expired'` (migration 0557) e a
   // poda anulou os DOIS campos — a partir daí `hasMedia` é false e esta mensagem
   // de mídia perde o render. O aviso é o do issue #1534.
@@ -410,7 +415,7 @@ export function MessageBubble({
 
             {localizacao && <LocationCard localizacao={localizacao} />}
 
-            {message.body && !isContact && !localizacao && (
+            {message.body && !isContact && !localizacao && !notaDeVoz && (
               <p className="whitespace-pre-wrap wrap-anywhere leading-snug">{message.body}</p>
             )}
           </>
