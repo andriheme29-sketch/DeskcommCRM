@@ -43,7 +43,12 @@ export const triggerConfigSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     kind: z.literal("stage_change"),
-    params: z.strictObject({ stage_id: z.string().uuid() }),
+    // `segments` (mesma chave de `silence`/`inbound_after_silence`): a marca dos
+    // fluxos por etapa vive em `contacts.tags`. Sem o filtro, dois pointers
+    // armados na MESMA etapa (funil compartilhado por duas marcas) disputam a
+    // única vaga viva (`idx_followup_enrollments_one_live`, único por
+    // `(organization_id, contact_id)`) e a marca ERRADA pode ocupá-la.
+    params: z.strictObject({ stage_id: z.string().uuid(), segments: z.array(z.string()).optional() }),
     ...CANCEL_ON_REPLY,
   }),
   z.strictObject({

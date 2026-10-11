@@ -174,6 +174,7 @@ function gatilhoDb(): GatilhoEtapaDb {
           organization_id: row.organization_id,
           active_version_id: row.active_version_id,
           stage_id: parsed.data.params.stage_id,
+          segments: parsed.data.kind === "stage_change" ? (parsed.data.params.segments ?? []) : [],
         });
       }
       return pointers;
@@ -184,6 +185,13 @@ function gatilhoDb(): GatilhoEtapaDb {
         [leadId, orgId],
       );
       return rows[0]?.contact_id ?? null;
+    },
+    async carregaTagsDoContato(orgId, contactId) {
+      const { rows } = await pool.query<{ tags: string[] | null }>(
+        `select tags from contacts where id = $1 and organization_id = $2`,
+        [contactId, orgId],
+      );
+      return rows[0]?.tags ?? [];
     },
     async carregaNoDeGatilho(orgId, versionId) {
       const { rows } = await pool.query<{ graph: FlowGraph }>(

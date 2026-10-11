@@ -180,6 +180,7 @@ function gatilhoDb(): GatilhoEtapaDb {
           organization_id: r.organization_id,
           active_version_id: r.active_version_id,
           stage_id: r.trigger_config.params.stage_id,
+          segments: [],
         });
       }
       return out;
@@ -190,6 +191,10 @@ function gatilhoDb(): GatilhoEtapaDb {
         [leadId, orgId],
       );
       return rows[0]?.contact_id ?? null;
+    },
+    async carregaTagsDoContato() {
+      // Sem guarda de marca nesta fixture: `segments: []` inscreve sempre.
+      return [];
     },
     async carregaNoDeGatilho(orgId, versionId) {
       const { rows } = await pool.query<{ graph: FlowGraph }>(

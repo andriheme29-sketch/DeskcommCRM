@@ -39,6 +39,7 @@ interface Registro {
 function fakeDb(opts: {
   pointers?: PointerDeEtapa[];
   contato?: string | null;
+  tags?: string[];
   noDeGatilho?: string | null;
   pedeAgente?: boolean;
   jaVivo?: boolean;
@@ -51,6 +52,9 @@ function fakeDb(opts: {
     async carregaContatoDoNegocio() {
       opts.registro.contatoConsultado++;
       return opts.contato === undefined ? CONTATO : opts.contato;
+    },
+    async carregaTagsDoContato() {
+      return opts.tags ?? [];
     },
     async carregaNoDeGatilho() {
       if (opts.noDeGatilho === null) return null;
@@ -103,6 +107,7 @@ const pointerArmado: PointerDeEtapa = {
   organization_id: ORG,
   active_version_id: VERSION,
   stage_id: ETAPA_DESTINO,
+  segments: [],
 };
 
 const CLOCK = () => new Date("2026-08-10T12:00:00.000Z");
@@ -301,5 +306,87 @@ describe("aplicaGatilhoDeEtapa — o enrollment que nasce", () => {
     expect(s.pointers_armados).toBe(2);
     expect(s.enrolled).toBe(1);
     expect(s.pointers_barrados_pelo_gate).toBe(1);
+  });
+});
+
+describe("aplicaGatilhoDeEtapa — guarda de marca", () => {
+  // Funil compartilhado por duas marcas: dois pointers na MESMA etapa, cada um
+  // preso a uma marca (`segments` ∩ `contacts.tags`). Sem a guarda, a ordem de
+  // carregamento decide quem ocupa a única vaga viva — e a marca ERRADA pode
+  // consumi-la.
+  const doFignar: PointerDeEtapa = {
+    ...pointerArmado,
+    id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    segments: ["fignar"],
+  };
+  const doHidraliso: PointerDeEtapa = {
+    ...pointerArmado,
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    segments: ["hidraliso"],
+  };
+
+  it("só o pointer da marca do contato inscreve — fignar", async () => {
+    const reg = registro();
+    const s = await aplicaGatilhoDeEtapa(
+      {
+        db: fakeDb({ pointers: [doFignar, doHidraliso], tags: ["fignar"], registro: reg }),
+        gateDb: fakeGate([{ agentId: AGENT, pointerIds: [doFignar.id, doHidraliso.id] }]),
+        clock: CLOCK,
+      },
+      evento(),
+    );
+    expect(s.enrolled).toBe(1);
+    expect(s.skipped_segments).toBe(1);
+    expect(reg.enrollments).toHaveLength(1);
+    expect(reg.enrollments[0]).toMatchObject({ pointer_id: doFignar.id });
+  });
+
+  it("só o pointer da marca do contato inscreve — hidraliso (o inverso)", async () => {
+    const reg = registro();
+    const s = await aplicaGatilhoDeEtapa(
+      {
+        db: fakeDb({ pointers: [doFignar, doHidraliso], tags: ["hidraliso"], registro: reg }),
+        gateDb: fakeGate([{ agentId: AGENT, pointerIds: [doFignar.id, doHidraliso.id] }]),
+        clock: CLOCK,
+      },
+      evento(),
+    );
+    expect(s.enrolled).toBe(1);
+    expect(s.skipped_segments).toBe(1);
+    expect(reg.enrollments[0]).toMatchObject({ pointer_id: doHidraliso.id });
+  });
+
+  it("segments vazio (ausente) continua inscrevendo — comportamento atual preservado", async () => {
+    const reg = registro();
+    const s = await aplicaGatilhoDeEtapa(
+      {
+        db: fakeDb({ pointers: [pointerArmado], tags: [], registro: reg }),
+        gateDb: fakeGate([{ agentId: AGENT, pointerIds: [POINTER] }]),
+        clock: CLOCK,
+      },
+      evento(),
+    );
+    expect(s.enrolled).toBe(1);
+    expect(s.skipped_segments).toBe(0);
+  });
+
+  it("duas marcas distintas, contato só com uma: um inscreve, o outro é pulado", async () => {
+    const reg = registro();
+    const terceiro: PointerDeEtapa = {
+      ...pointerArmado,
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      segments: ["outra-marca"],
+    };
+    const s = await aplicaGatilhoDeEtapa(
+      {
+        db: fakeDb({ pointers: [doFignar, terceiro], tags: ["fignar"], registro: reg }),
+        gateDb: fakeGate([{ agentId: AGENT, pointerIds: [doFignar.id, terceiro.id] }]),
+        clock: CLOCK,
+      },
+      evento(),
+    );
+    expect(s.enrolled).toBe(1);
+    expect(s.skipped_segments).toBe(1);
+    expect(reg.enrollments[0]).toMatchObject({ pointer_id: doFignar.id });
   });
 });

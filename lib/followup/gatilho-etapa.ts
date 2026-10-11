@@ -50,6 +50,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EventRow } from "@/lib/event-log/dispatcher";
 import { flowGraphSchema } from "./graph-schema";
 import { triggerConfigSchema } from "./api-schemas";
+import { segmentoCasa } from "./gap-de-retorno";
 import {
   decidirAgenteDoEnrollmentAutomatico,
   noDeGatilhoDoGrafo,
@@ -67,6 +68,8 @@ export interface PointerDeEtapa {
   organization_id: string;
   active_version_id: string;
   stage_id: string;
+  /** Marcas do pointer (overlap com `contacts.tags`). Vazio = todas as marcas. */
+  segments: string[];
 }
 
 /** Interface estreita de DB — mesma doutrina de `SilenceSweepDb`/`ReactivityAdminClient`:
@@ -77,6 +80,8 @@ export interface GatilhoEtapaDb {
   carregaPointersDeEtapa(orgId: string): Promise<PointerDeEtapa[]>;
   /** `contact_id` do negócio — `null` quando o negócio não tem contato (coluna é nullable). */
   carregaContatoDoNegocio(orgId: string, leadId: string): Promise<string | null>;
+  /** `tags` do contato — a marca que decide qual pointer da mesma etapa inscreve. */
+  carregaTagsDoContato(orgId: string, contactId: string): Promise<string[]>;
   /** id do nó `trigger` do grafo pinado; `null` se a version sumiu (defensivo). */
   carregaNoDeGatilho(orgId: string, versionId: string): Promise<NoDeGatilho | null>;
   /** `inserted:false` = 23505 (contato já vivo em algum fluxo) → skip silencioso. */
@@ -120,6 +125,8 @@ export interface GatilhoEtapaSummary {
   enrolled: number;
   skipped_existing: number;
   skipped_stale_origin?: number;
+  /** Pointer pulado por não casar a marca do contato (`segmentoCasa`). Caminho normal. */
+  skipped_segments: number;
   /** Negócio entrou na etapa mas não tem contato — não há a quem escrever. Contado, nunca calado. */
   sem_contato: number;
 }
@@ -141,6 +148,7 @@ function vazio(): GatilhoEtapaSummary {
     pointers_barrados_pelo_gate: 0,
     enrolled: 0,
     skipped_existing: 0,
+    skipped_segments: 0,
     sem_contato: 0,
   };
 }
@@ -179,7 +187,17 @@ export async function aplicaGatilhoDeEtapa(
     return summary;
   }
 
+  // A marca do contato é lida UMA vez, fora do loop, e só quando há pointer
+  // armado — sem fluxo não há por que pagar ida ao banco. É o desempate por
+  // marca explícita (nunca por ordem de carregamento) quando dois pointers
+  // disputam a mesma etapa.
+  const tagsDoContato = await deps.db.carregaTagsDoContato(row.organization_id, contatoId);
+
   for (const pointer of armados) {
+    if (!segmentoCasa(pointer.segments, tagsDoContato)) {
+      summary.skipped_segments++;
+      continue;
+    }
     const noDeGatilho = await deps.db.carregaNoDeGatilho(row.organization_id, pointer.active_version_id);
     if (!noDeGatilho) continue;
     const { agentId, barrado } = await decidirAgenteDoEnrollmentAutomatico(
@@ -270,6 +288,7 @@ export function createSupabaseGatilhoEtapaDb(admin: SupabaseClient): GatilhoEtap
           organization_id: row.organization_id,
           active_version_id: row.active_version_id,
           stage_id: parsed.data.params.stage_id,
+          segments: parsed.data.kind === "stage_change" ? (parsed.data.params.segments ?? []) : [],
         });
       }
       return pointers;
@@ -284,6 +303,18 @@ export function createSupabaseGatilhoEtapaDb(admin: SupabaseClient): GatilhoEtap
         .maybeSingle();
       if (error) throw new Error(error.message);
       return data?.contact_id ?? null;
+    },
+
+    async carregaTagsDoContato(orgId, contactId) {
+      const { data, error } = await admin
+        .from("contacts")
+        .select("tags")
+        .eq("id", contactId)
+        .eq("organization_id", orgId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      const tags = (data as { tags?: unknown } | null)?.tags;
+      return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string") : [];
     },
 
     async carregaNoDeGatilho(orgId, versionId) {
