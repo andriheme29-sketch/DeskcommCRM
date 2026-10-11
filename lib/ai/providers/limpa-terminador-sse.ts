@@ -6,17 +6,23 @@
  * "Invalid JSON response" (HTTP 200).
  *
  * Só corta quando o trecho ANTES do primeiro `data:` já é JSON completo — é a
- * assinatura do terminador colado, e nada mais. `text/event-stream`, corpo que
- * já começa em `data:` e JSON legítimo que só MENCIONA `data:` (o prefixo aí não
- * fecha em JSON) passam intactos; sem a guarda isto viraria regressão.
+ * assinatura do terminador colado, e nada mais. Corpo que já começa em `data:`
+ * (stream de verdade, com N chunks) e JSON legítimo que só MENCIONA `data:` (o
+ * prefixo aí não fecha em JSON) passam intactos; sem essa guarda isto viraria
+ * regressão.
+ *
+ * A guarda NÃO é pelo `content-type`. O 9Router manda `text/event-stream`
+ * mesmo quando responde um JSON único não-stream — foi medido: com a guarda por
+ * content-type o terminador continuava colado e o turno seguia morto. Quem
+ * separa os dois é o CRITÉRIO DO CONTEÚDO: se o prefixo antes do primeiro
+ * `data:` já é JSON inteiro, o `data:` é terminador colado; se o corpo começa
+ * por `data:` (stream real), o prefixo não é JSON e nada é cortado.
  */
 export function limpaTerminadorSse(interno: typeof fetch = fetch): typeof fetch {
   return async (input, init) => {
     const res = await interno(input, init);
-    const contentType = res.headers.get("content-type") ?? "";
-    // Stream de verdade e resposta sem corpo passam intactos: em 204/205/304 o
-    // construtor de Response recusa qualquer corpo.
-    if (contentType.includes("text/event-stream")) return res;
+    // Resposta sem corpo passa intacta: em 204/205/304 o construtor de Response
+    // recusa qualquer corpo.
     if (res.status === 204 || res.status === 205 || res.status === 304) return res;
     const texto = await res.text();
     const corte = texto.indexOf("data:");
