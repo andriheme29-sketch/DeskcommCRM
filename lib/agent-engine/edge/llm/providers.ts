@@ -10,6 +10,7 @@ import type { LanguageModel } from 'ai';
 import { MockLanguageModelV3 } from 'ai/test';
 
 import { PROVEDOR_POR_ASSINATURA } from '@/lib/ai/pontos/provedores';
+import { limpaTerminadorSse } from '@/lib/ai/providers/limpa-terminador-sse';
 import { fetchParaDestinoDaOrganizacao } from '@/lib/automation/destinos-internos-autorizados';
 
 import { allowlistedFetch, buildAllowlist } from '../egress';
@@ -359,7 +360,7 @@ export function createDefaultRegistry(opts?: {
       return createOpenAI({
         apiKey,
         baseURL: baseUrl,
-        fetch: fetchParaDestinoDaOrganizacao(contain(baseUrl)),
+        fetch: limpaTerminadorSse(fetchParaDestinoDaOrganizacao(contain(baseUrl))),
       }).chat(modelId);
     },
   };

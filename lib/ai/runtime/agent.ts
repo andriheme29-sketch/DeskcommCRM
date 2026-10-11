@@ -39,6 +39,7 @@ import {
 import { CredentialUnavailableError, loadCredential } from "@/lib/ai/credentials";
 import { lerLoginCodexRenovandoSeProxima } from "@/lib/ai/credenciais/login-codex";
 import { PROVEDOR_POR_ASSINATURA } from "@/lib/ai/pontos/provedores";
+import { limpaTerminadorSse } from "@/lib/ai/providers/limpa-terminador-sse";
 import { PROVEDOR_DE_RESERVA_DA_ASSINATURA } from "@/lib/ai/pontos/reserva-da-assinatura";
 import { fetchParaDestinoDaOrganizacao } from "@/lib/automation/destinos-internos-autorizados";
 import { decidirElegibilidadeDaConversaViaSupabase } from "@/lib/ai/elegibilidade/consulta-supabase";
@@ -237,7 +238,7 @@ export function buildModel(
       }
       // Endereço escolhido pela empresa: mesma régua de destino do turno do
       // agente (`providers.ts`), senão o ensaio seria a porta para a rede interna.
-      return createOpenAI({ apiKey, baseURL: baseUrl, fetch: fetchParaDestinoDaOrganizacao() }).chat(modelId);
+      return createOpenAI({ apiKey, baseURL: baseUrl, fetch: limpaTerminadorSse(fetchParaDestinoDaOrganizacao()) }).chat(modelId);
     default:
       throw new Error(`unsupported_provider: ${provider}`);
   }
