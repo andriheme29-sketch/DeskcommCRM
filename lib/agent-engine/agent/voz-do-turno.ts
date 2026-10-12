@@ -173,7 +173,17 @@ export function corpoVaiBemEmVoz(corpo: string): MotivoDaVoz | null {
   // Três linhas ou mais é lista/roteiro — áudio lê tudo numa tacada e some. Duas
   // quebras (três linhas) já bastam: bolha de conversa é uma ou duas linhas, e
   // rebaixar para texto é a direção SEGURA (texto sempre funciona; voz errada não).
-  const quebras = (texto.match(/\n/g) ?? []).length;
+  //
+  // ⚠️ A LINHA EM BRANCO NÃO CONTA. Quem separa assim é o PRÓPRIO motor: o
+  // `instrucaoDeBolhas` (split-message.ts) manda o modelo escrever cada ideia em
+  // seu parágrafo, com uma linha em branco entre eles, porque é assim que o
+  // `sendInBubbles` corta as bolhas. Contar essa quebra como "lista" rebaixava
+  // para TEXTO exatamente as falas de etapa do funil — as que mais precisam de
+  // voz — e o sintoma no atendimento era "o modelo pediu voz e não saiu áudio".
+  // Lista de verdade (endereço/CNPJ, um item por linha SIMPLES) continua
+  // rebaixando, porque essas quebras sobrevivem ao colapso dos parágrafos.
+  const semParagrafos = texto.replace(/\n[ \t]*\n+/g, " ");
+  const quebras = (semParagrafos.match(/\n/g) ?? []).length;
   if (quebras >= 2) return "texto_em_lista";
   return null;
 }
