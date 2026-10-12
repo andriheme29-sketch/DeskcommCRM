@@ -32,7 +32,20 @@
  *
  * Escrever MP3 já É o streaming do provedor; o turno consome os bytes inteiros
  * para medir a duração e enviar a nota. Não há aqui um caminho de chunks.
+ *
+ * ═══ POR QUE ESTE ADAPTADOR TEM TIMEOUT PRÓPRIO, MAIOR QUE O PADRÃO ═══
+ *
+ * Medido nesta instalação (2026-10-12, dentro do container do worker): o tier
+ * gratuito leva de 11 s a 22 s para sintetizar UMA fala de etapa do funil
+ * (450–1.000 caracteres), e a cauda é errática — a mesma fala que saiu em 0,5 s
+ * pelo host já gastou 21 s no worker. Com o `TIMEOUT_PADRAO_MS` (20 s) o áudio
+ * era descartado e a mensagem seguia em TEXTO, que é exatamente o defeito que o
+ * operador via ("não mandou áudio na etapa de áudio"): o turno pedia voz
+ * (`modelo_pediu_voz`) e o log fechava com `tts_falhou / TimeoutError`.
+ * O turno já espera a voz antes de enviar, então esperar mais aqui não atrasa
+ * nada além do próprio áudio — e falhar custa a nota de voz inteira.
  */
+const FISH_TIMEOUT_MS = 90_000;
 import {
   duracaoDoAudio,
   TIMEOUT_PADRAO_MS,
@@ -104,7 +117,7 @@ export async function sintetizarComFish(
         format: "mp3",
         sample_rate: sampleRate,
       }),
-      signal: AbortSignal.timeout(deps.timeoutMs ?? TIMEOUT_PADRAO_MS),
+      signal: AbortSignal.timeout(deps.timeoutMs ?? FISH_TIMEOUT_MS),
     });
 
     if (!res.ok) {
