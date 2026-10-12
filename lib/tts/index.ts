@@ -1,5 +1,5 @@
 /**
- * A PORTA DE VOZ — um contrato só, dois provedores atrás.
+ * A PORTA DE VOZ — um contrato só, três provedores atrás.
  *
  * Quem chama (o turno do agente, via `lib/agent-engine/agent/audio-do-turno.ts`)
  * nunca pergunta QUAL provedor está por baixo: entrega o texto e a config, e
@@ -22,6 +22,7 @@
  * é obrigada a contratar TTS, e o produto inteiro funciona sem esta chave.
  */
 import { sintetizarComElevenLabs } from "./elevenlabs";
+import { sintetizarComFish } from "./fish";
 import { sintetizarComOpenAi } from "./openai";
 import {
   FORMATO_PADRAO,
@@ -53,9 +54,10 @@ export type {
   VozSintetizada,
 } from "./tipos";
 export { ELEVENLABS_BASE_URL } from "./elevenlabs";
+export { FISH_BASE_URL, FISH_MODELO_PADRAO } from "./fish";
 export { MODELO_PADRAO_ABERTO, OPENAI_TTS_BASE_URL, VOZ_PADRAO_ABERTA } from "./openai";
 
-const PROVEDORES_CONHECIDOS: readonly ProvedorDeVoz[] = ["elevenlabs", "tts-aberto"];
+const PROVEDORES_CONHECIDOS: readonly ProvedorDeVoz[] = ["elevenlabs", "tts-aberto", "fish"];
 
 /**
  * Este id tem ADAPTADOR aqui? Pergunta diferente da que a tela faz
@@ -121,9 +123,14 @@ export async function sintetizarVoz(
       message: `não há adaptador de voz para "${provedor}"`,
     };
   }
-  return provedor === "tts-aberto"
-    ? sintetizarComOpenAi(texto, deps)
-    : sintetizarComElevenLabs(texto, deps);
+  switch (provedor) {
+    case "tts-aberto":
+      return sintetizarComOpenAi(texto, deps);
+    case "fish":
+      return sintetizarComFish(texto, deps);
+    default:
+      return sintetizarComElevenLabs(texto, deps);
+  }
 }
 
 /** Reexport de tipo conveniente para quem só quer o código de falha. */

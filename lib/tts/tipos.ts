@@ -2,9 +2,9 @@
  * O QUE TODA VOZ TEM EM COMUM — e o que NÃO muda quando o provedor muda.
  *
  * A voz do agente nasceu presa a um provedor (ElevenLabs) porque era a única
- * integração que existia. Passou a ter dois: o ElevenLabs nativo e qualquer
- * gateway compatível com a API da OpenAI (`POST {base}/audio/speech`). O que os
- * dois dividem é este arquivo — o contrato de entrada, o de saída, o teto de
+ * integração que existia. Passou a ter três: o ElevenLabs nativo, qualquer
+ * gateway compatível com a API da OpenAI (`POST {base}/audio/speech`) e a Fish
+ * Audio (`POST {base}/tts`). O que os três dividem é este arquivo — o contrato de entrada, o de saída, o teto de
  * texto e a régua de duração. O que os separa mora em `./elevenlabs` e
  * `./openai`, cada um com o seu jeito de falar HTTP.
  *
@@ -49,7 +49,7 @@ export const LIMITE_DE_CARACTERES = 2_500;
  * sem ramo correspondente falha com `provedor_desconhecido` — erro tipado, não
  * exceção. Quem casa as duas listas é `lib/tts/index.test.ts`.
  */
-export type ProvedorDeVoz = "elevenlabs" | "tts-aberto";
+export type ProvedorDeVoz = "elevenlabs" | "tts-aberto" | "fish";
 
 export interface VozSintetizada {
   bytes: Buffer;

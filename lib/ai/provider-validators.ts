@@ -403,6 +403,28 @@ export async function validateVozAbertaKey(
 }
 
 /**
+ * A chave da Fish Audio (`fish`): `GET {base}/wallet` com `Authorization: Bearer`.
+ *
+ * A Fish NÃO fala o `/audio/speech` da OpenAI, então a prova NÃO é `GET /models`
+ * como nos compatíveis. A carteira é o endpoint autenticado mais barato e que
+ * não exige escopo de catálogo (diferente de `/voices`), na mesma linha da
+ * escolha da ElevenLabs. Endereço oficial (`api.fish.audio/v1`) quando a
+ * credencial não traz um próprio; a régua anti-SSRF vale igual.
+ */
+export async function validateFishKey(
+  apiKey: string,
+  baseUrl?: string,
+): Promise<ValidationResult> {
+  return validarEndpointCompativel(apiKey, baseUrl, "https://api.fish.audio/v1", (base) =>
+    timedFetch(
+      `${base}/wallet`,
+      { method: "GET", headers: { Authorization: `Bearer ${apiKey}` }, redirect: "manual" },
+      TIMEOUT_MS_CUSTOM,
+    ),
+  );
+}
+
+/**
  * O miolo compartilhado de validação de um endpoint compatível: tira a barra
  * final, recusa endereço malformado e o que fura a régua anti-SSRF, e devolve o
  * desfecho de rede sem lançar. Extraído para os provedores de voz não repetirem
@@ -469,6 +491,8 @@ export function validateProviderKey(
       return validateElevenLabsKey(apiKey, baseUrl);
     case "tts-aberto":
       return validateVozAbertaKey(apiKey, baseUrl);
+    case "fish":
+      return validateFishKey(apiKey, baseUrl);
     case "typesafe":
       return validateTypeSafeKey(apiKey);
     case PROVEDOR_POR_ASSINATURA:

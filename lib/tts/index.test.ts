@@ -59,6 +59,7 @@ describe("temAdaptadorDeVoz × a lista que a tela oferece", () => {
   it("só os dois adaptadores que existem", () => {
     expect(temAdaptadorDeVoz("elevenlabs")).toBe(true);
     expect(temAdaptadorDeVoz("tts-aberto")).toBe(true);
+    expect(temAdaptadorDeVoz("fish")).toBe(true);
     expect(temAdaptadorDeVoz("openai")).toBe(false);
     expect(temAdaptadorDeVoz("")).toBe(false);
   });

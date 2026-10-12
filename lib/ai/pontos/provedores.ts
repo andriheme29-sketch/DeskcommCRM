@@ -268,6 +268,16 @@ export const PROVEDORES_DE_VOZ = [
     ondePegarAChave: "https://docs.example/voz-por-endpoint",
     prefixoDaChave: "sk-...",
   },
+  {
+    id: "fish",
+    rotulo: "Fish Audio (voz)",
+    quandoUsar:
+      "A voz do agente por clone da Fish: você informa a chave e a voz aprovada (o reference_id) e o CRM fala por ela. Use quando quiser a voz clonada da operação no lugar da ElevenLabs.",
+    aceitaEndpointProprio: false,
+    catalogoSincronizavel: false,
+    ondePegarAChave: "https://fish.audio/go-api/",
+    prefixoDaChave: "sk-fis...",
+  },
 ] as const satisfies readonly ProvedorSuportado[];
 
 export const IDS_DE_PROVEDOR_DE_VOZ = PROVEDORES_DE_VOZ.map((p) => p.id) as unknown as readonly [
