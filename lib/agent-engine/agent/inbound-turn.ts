@@ -205,6 +205,10 @@ import {
   runBeforeSend,
   tipoDeEnvio,
 } from '../guardrails/before-send';
+import {
+  aplicarAjustesDeEstilo,
+  lerAjustesDeEstiloDaOrg,
+} from '../guardrails/ajustes-de-estilo-da-org';
 import { isStatusSendable } from '../../channels/meta/template-binding';
 import { capabilitiesOf } from '@/lib/channels/capabilities';
 import { renderTemplateBody } from '@/lib/channels/meta/render-template';
@@ -3254,7 +3258,19 @@ async function executarTurnoDoAgente(
         // `**negrito**` de Markdown na tela do cliente. Antes de qualquer gate,
         // para que o corpo vazio, as bolhas e a pausa humana meçam o que sai.
         // Ver `formato-whatsapp.ts`.
-        const body = formatarParaWhatsApp(corpoDoModelo);
+        let body = formatarParaWhatsApp(corpoDoModelo);
+        // AJUSTE DE ESTILO DA ORG (ex.: `sem_travessao_longo`), aplicado AQUI, sobre
+        // o mesmo corpo que a cadeia `before_send` vai julgar e reescrever. Antes, a
+        // reescrita acontecia SÓ dentro da cadeia — depois de a nota de voz ter sido
+        // sintetizada a partir do corpo cru. Resultado medido: o áudio era gravado com
+        // o texto original, a cadeia emendava o corpo (delta de −1/−2 no `ajustes_de_estilo`)
+        // e a regra dura `finalBody === body` descartava a voz e mandava TEXTO — sem
+        // ninguém ver que a causa era a reescrita. Aplicando o ajuste ANTES de sintetizar,
+        // o corpo persistido e o áudio batem (o ajuste é idempotente, então a cadeia vê
+        // `sem_mudanca` e nada reescreve). Se a leitura falhar, cai no default desligado —
+        // preferência de estilo não pode derrubar um atendimento.
+        const ajustesDeEstilo = await lerAjustesDeEstiloDaOrg(pool, tenantId);
+        body = aplicarAjustesDeEstilo(body, ajustesDeEstilo.ajustes);
         // CORPO VAZIO NÃO SAI. Medido ao vivo (2026-09-19): o `gpt-4o-mini`
         // chamou `send_message` várias vezes com corpo que virou vazio e o
         // WhatsApp do cliente recebeu bolhas em branco. O schema garante
@@ -3752,11 +3768,11 @@ async function executarTurnoDoAgente(
                   });
                 }
                 // NOTA DE VOZ — uma mensagem física só, sem fatiamento: não se
-                // fatia um áudio em bolhas. A condição `finalBody === body` é a
-                // regra dura que impede a única mentira possível desta feature: a
-                // voz foi gravada com o texto PRÉ-cadeia, e se um gate emendou o
-                // corpo (hoje só o disclosure F4-05) o áudio já não diz o que vai
-                // sair — então sai TEXTO, o corpo final e íntegro.
+                // fatia um áudio em bolhas. O gate que pode emendar o corpo é o
+                // `ajustes_de_estilo` (reescreve travessão longo) e o disclosure F4-05;
+                // a voz foi gravada com o texto PRÉ-cadeia, então só vai como áudio se o
+                // `finalBody` for EXATAMENTE o corpo gravado. `finalBody === body` é essa
+                // regra dura: emendado, sai TEXTO (integro) e o motivo vai ao log.
                 if (audioDaVoz !== null && finalBody === body) {
                   return await enviar(finalBody, {
                     storagePath: audioDaVoz.storagePath,
