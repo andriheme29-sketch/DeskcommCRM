@@ -112,7 +112,11 @@ ENV NODE_ENV=production \
 # ffmpeg: a derivação de vídeo (Onda 3.1) roda no processo do app — o cron
 # event-log-drain executa o media_derive handler, que chama `ffmpeg` via spawn
 # pra extrair áudio+frames. Sem o binário, todo vídeo recebido falha a derivação.
-RUN apk add --no-cache ffmpeg
+# font-dejavu: mesmo motivo no PREVIEW e em qualquer render no processo do app —
+# o print do IMC (`print-do-imc.ts`, resvg) sai EM BRANCO sem fonte instalada: o
+# click de layout do SVG sem `sans-serif` disponível não desenha o texto (medido:
+# 0 pixels de texto). O font-dejavu cobre o `font-family: sans-serif`.
+RUN apk add --no-cache ffmpeg font-dejavu
 # non-root
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 # A versão que /api/v1/health reporta (invariante 7). Precisa vir por ARG: a

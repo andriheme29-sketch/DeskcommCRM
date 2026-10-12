@@ -17,6 +17,13 @@ COPY package.json pnpm-lock.yaml ./
 COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 
+# Fontes do sistema: o worker roda o turno e desenha o PRINT DO IMC com o resvg
+# (`lib/agent-engine/agent/print-do-imc.ts`). Sem NENHUMA fonte instalada, o click
+# de layout do resvg vem vazio e o PNG sai EM BRANCO — só a barra verde, sem o
+# número do IMC. Medido no container: `darkText: 0` pixels. O font-dejavu cobre o
+# `font-family: sans-serif` do SVG.
+RUN apk add --no-cache font-dejavu
+
 COPY . .
 
 # A versão por ÚLTIMO. Declarada antes do `pnpm install`, como estava, a
