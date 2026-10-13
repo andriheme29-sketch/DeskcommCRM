@@ -28,6 +28,14 @@
  * dos guardrails de `before_send`: uma régua pura, com motivo auditável, em vez
  * de um pedido no prompt que o modelo às vezes ignora.
  *
+ * ═══ E O QUE A VOZ NÃO ACRESCENTA: A FALA CURTA ═══
+ *
+ * "Entendi, qual é o seu peso e sua altura?" lida em voz alta é mais lenta de
+ * consumir do que de ler, e ainda gasta crédito de voz. O `FALA_CURTA_MAX_CHARS`
+ * escreve o curto e fala o longo — o roteiro do funil já é desenhado assim
+ * (medido: [TEXTO] até 97 caracteres, [ÁUDIO] de 149 para cima). A régua vale
+ * onde o MODO ligou a voz; pedido explícito continua vencendo.
+ *
  * ═══ OS SINAIS SÃO BARATOS E JÁ ESTÃO NO TURNO ═══
  *
  * `clienteMandouAudio` e `textoDoCliente` chegam sem custo nenhum de rede — o
@@ -86,7 +94,9 @@ export type MotivoDaVoz =
   | "texto_tem_codigo"
   | "texto_longo"
   | "texto_em_lista"
-  | "texto_vazio";
+  | "texto_vazio"
+  // a voz é DESNECESSÁRIA (não é o que ela estraga — ver `FALA_CURTA_MAX_CHARS`)
+  | "texto_curto";
 
 export interface DecisaoDeVoz {
   falar: boolean;
@@ -149,6 +159,31 @@ function semAcento(texto: string): string {
 }
 
 /**
+ * A FRONTEIRA ENTRE ESCREVER E FALAR — abaixo disto a pergunta sai em TEXTO.
+ *
+ * Medido no ROTEIRO do funil (o Dr. Carlos, 21 falas marcadas): as falas de
+ * TEXTO têm 37 a 97 caracteres — "Entendi, qual é o seu peso e sua altura?",
+ * "Você faz o uso de bebidas alcoólicas?", "Há quanto tempo você vem sentindo
+ * esses sintomas?" — e as de ÁUDIO começam em 149 e vão a 1.237. Há um vão
+ * limpo entre 97 e 149: nada do roteiro cai no meio.
+ *
+ * ⚠️ A régua é o TAMANHO da fala, não o rótulo `[TEXTO]`/`[ÁUDIO]` do prompt.
+ * Rotular exigiria o modelo lembrar de propagar a marca até a ferramenta, e o
+ * defeito que este módulo conserta tem exatamente essa forma — capacidade que
+ * depende de o modelo lembrar não existe metade das vezes. O tamanho está no
+ * corpo que vai sair, sempre, sem o modelo pedir nada.
+ *
+ * O limiar fica em 120: acima do maior `[TEXTO]` medido (97) e abaixo do menor
+ * `[ÁUDIO]` medido (149) — com margem para os dois lados, porque uma fala real
+ * cresce ou encolhe alguns caracteres em relação ao roteiro.
+ *
+ * ⚠️ Vale só onde o MODO ligou a voz. Pedido EXPLÍCITO — o cliente dizendo que
+ * não consegue ler, ou o modelo pedindo voz — vence esta régua: quem pediu,
+ * pediu. Sem essa ressalva, `decidir` + cliente pedindo áudio devolveria texto.
+ */
+export const FALA_CURTA_MAX_CHARS = 120;
+
+/**
  * O que a voz ESTRAGA. Devolve o motivo do rebaixamento, ou `null` quando o
  * texto vai bem em áudio. Pura, e é o que segura o modo `sempre`.
  *
@@ -185,6 +220,10 @@ export function corpoVaiBemEmVoz(corpo: string): MotivoDaVoz | null {
   const semParagrafos = texto.replace(/\n[ \t]*\n+/g, " ");
   const quebras = (semParagrafos.match(/\n/g) ?? []).length;
   if (quebras >= 2) return "texto_em_lista";
+  // Por último, e só por último: fala curta já passou por TODOS os vetos acima,
+  // então isto nunca esconde um link ou um CNPJ — só evita gastar crédito de voz
+  // numa pergunta que se lê num relance.
+  if (texto.length < FALA_CURTA_MAX_CHARS) return "texto_curto";
   return null;
 }
 
@@ -200,7 +239,9 @@ export function corpoVaiBemEmVoz(corpo: string): MotivoDaVoz | null {
  *     quando o cliente mandou áudio; `decidir` quer com QUALQUER sinal (áudio do
  *     cliente, pedido em texto, ou o pedido do modelo).
  *  3. **O LINT por último** — o que a voz estragaria rebaixa para texto mesmo
- *     no `sempre`. Ligar voz nunca é desculpa para mandar um link falado.
+ *     no `sempre`. Ligar voz nunca é desculpa para mandar um link falado. A
+ *     régua de TAMANHO (`texto_curto`) é a única que um pedido explícito vence;
+ *     link, código e lista vencem qualquer pedido, porque não há o que ouvir.
  */
 export function decidirModalidadeDeVoz(entrada: EntradaDaVoz): DecisaoDeVoz {
   const { modo, pedidoDoModelo, clienteMandouAudio, textoDoCliente, corpo } = entrada;
@@ -243,7 +284,19 @@ export function decidirModalidadeDeVoz(entrada: EntradaDaVoz): DecisaoDeVoz {
 
   if (!quer) return { falar: false, motivo };
 
+  // ⚠️ `pedidoExplicito` — o cliente dizendo que não consegue ler, ou o modelo
+  // pedindo voz. Quem PEDIU, pediu: a régua de fala curta abaixo não derruba um
+  // pedido, senão `decidir` + "me manda áudio" devolveria texto — e o gatilho
+  // que mais existe no canal é justamente o cliente que não pode ler.
+  const pedidoExplicito =
+    modo === "sempre" ? pedidoDoModelo : clienteMandouAudio || clientePedeVoz(textoDoCliente) || pedidoDoModelo;
+
   const rebaixa = corpoVaiBemEmVoz(corpo);
+  // O rebaixamento de TAMANHO é do MODO, não do pedido: o modo `sempre` fala o
+  // que é longo e escreve o que é curto; mas quem pediu voz tem direito à voz.
+  if (rebaixa === "texto_curto" && pedidoExplicito) {
+    return { falar: true, motivo };
+  }
   if (rebaixa !== null) return { falar: false, motivo: rebaixa };
 
   return { falar: true, motivo };

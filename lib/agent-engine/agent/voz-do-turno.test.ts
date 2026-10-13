@@ -13,9 +13,18 @@ import {
   corpoVaiBemEmVoz,
   decidirModalidadeDeVoz,
   ehModoDeVoz,
+  FALA_CURTA_MAX_CHARS,
   MODOS_DE_VOZ,
   type EntradaDaVoz,
 } from "./voz-do-turno";
+
+/**
+ * Uma fala LONGA de verdade (a Etapa 2 do roteiro, 294 chars) — o caso que o modo
+ * `sempre` existe para atender. Antes desta constante, os casos de `sempre`
+ * usavam "Oi, tudo bem?" (13 chars), que a régua de fala curta agora escreve.
+ */
+const FALA_LONGA =
+  "Certo, entendi sim todos os seus sintomas. E eu fico um pouco preocupado, porque essa doença é uma doença silenciosa, ela não produz sintomas, é assintomática. Quando a pessoa começa a sentir esses sintomas, é porque já está em um processo de evolução e vai rapidamente para o grau 3!";
 
 /** Base neutra: sem sinal nenhum, texto simples. Cada caso sobrescreve o que importa. */
 function entrada(over: Partial<EntradaDaVoz> = {}): EntradaDaVoz {
@@ -71,18 +80,45 @@ describe("modo nunca — a tela é autoridade, inclusive contra o modelo", () =>
   });
 });
 
-describe("modo sempre — fala, salvo o que a voz estraga", () => {
-  it("fala texto comum sem nenhum sinal", () => {
-    expect(decidirModalidadeDeVoz(entrada({ modo: "sempre" }))).toEqual({
+describe("modo sempre — fala o LONGO, escreve o curto, e só isso", () => {
+  it("fala a fala longa do funil sem nenhum sinal", () => {
+    expect(decidirModalidadeDeVoz(entrada({ modo: "sempre", corpo: FALA_LONGA }))).toEqual({
       falar: true,
       motivo: "modo_sempre",
     });
   });
 
-  it("rebaixa para texto quando o corpo tem link", () => {
+  it("ESCREVE a pergunta curta — a voz não acrescenta nada a 40 caracteres", () => {
+    // Medi\u00e7\u00e3o no roteiro: as perguntas de [TEXTO] t\u00eam 37-97 caracteres.
+    for (const curta of [
+      "Entendi, qual é o seu peso e sua altura?",
+      "Você faz o uso de bebidas alcoólicas?",
+      "Há quanto tempo você vem sentindo esses sintomas?",
+    ]) {
+      expect(decidirModalidadeDeVoz(entrada({ modo: "sempre", corpo: curta })), curta).toEqual({
+        falar: false,
+        motivo: "texto_curto",
+      });
+    }
+  });
+
+  it("MAS o pedido do modelo vence a régua: quem pediu, pediu", () => {
     expect(
       decidirModalidadeDeVoz(
-        entrada({ modo: "sempre", corpo: "Segue o link: https://loja.example/pedido/9" }),
+        entrada({ modo: "sempre", pedidoDoModelo: true, corpo: "Qual é o seu peso e sua altura?" }),
+      ),
+    ).toEqual({ falar: true, motivo: "modo_sempre" });
+  });
+
+  it("rebaixa para texto quando o corpo tem link, mesmo com o modelo pedindo", () => {
+    // Link vence QUALQUER pedido: não há o que ouvir num endereço.
+    expect(
+      decidirModalidadeDeVoz(
+        entrada({
+          modo: "sempre",
+          pedidoDoModelo: true,
+          corpo: "Segue o link: https://loja.example/pedido/9 — " + FALA_LONGA,
+        }),
       ),
     ).toEqual({ falar: false, motivo: "texto_tem_link" });
   });
@@ -120,6 +156,15 @@ describe("modo decidir — qualquer sinal liga, e o silêncio é mudo", () => {
   });
 
   it("o modelo pedia voz (compatibilidade com o prompt atual)", () => {
+    // Corpo LONGO: em `decidir` quem pede voz é atendido, mas a régua de fala
+    // curta continua escrevendo a pergunta de 30 caracteres (ver o bloco dela).
+    expect(decidirModalidadeDeVoz(entrada({ pedidoDoModelo: true, corpo: FALA_LONGA }))).toEqual({
+      falar: true,
+      motivo: "modelo_pediu_voz",
+    });
+  });
+
+  it("o modelo pedindo voz em fala CURTA: fala, porque o pedido vence a régua", () => {
     expect(decidirModalidadeDeVoz(entrada({ pedidoDoModelo: true }))).toEqual({
       falar: true,
       motivo: "modelo_pediu_voz",
@@ -148,6 +193,15 @@ describe("clientePedeVoz — conservador de propósito", () => {
     }
   });
 
+  it("quem NÃO PODE LER recebe voz mesmo na fala curta — o pedido vence a régua", () => {
+    // O gatilho que mais existe no canal: o cliente que não consegue ler.
+    expect(
+      decidirModalidadeDeVoz(
+        entrada({ modo: "decidir", textoDoCliente: "não consigo ler, me manda áudio", corpo: "Qual é o seu peso?" }),
+      ),
+    ).toEqual({ falar: true, motivo: "cliente_pediu_voz" });
+  });
+
   it("NÃO casa conversa comum — o falso positivo aqui gasta crédito", () => {
     for (const frase of [
       "bom dia",
@@ -163,7 +217,7 @@ describe("clientePedeVoz — conservador de propósito", () => {
   });
 });
 
-describe("corpoVaiBemEmVoz — o que a voz estraga", () => {
+describe("corpoVaiBemEmVoz — o que a voz estraga, e o que ela não acrescenta", () => {
   it("rebaixa link, e-mail, código longo e lista", () => {
     expect(corpoVaiBemEmVoz("veja em https://x.example")).toBe("texto_tem_link");
     expect(corpoVaiBemEmVoz("manda pra mim@empresa.com")).toBe("texto_tem_email");
@@ -173,14 +227,41 @@ describe("corpoVaiBemEmVoz — o que a voz estraga", () => {
     expect(corpoVaiBemEmVoz("a".repeat(2_501))).toBe("texto_longo");
   });
 
-  it("NÃO rebaixa o que vai bem falado — preço curto, resposta seca, pergunta", () => {
-    for (const texto of [
+  it("ESCREVE a fala curta: abaixo do limiar a voz não acrescenta nada", () => {
+    for (const curta of [
       "Oi! Como posso ajudar?",
       "Custa R$ 1.500,00 à vista.",
       "Sim, temos em estoque.",
       "Posso te ligar às 14h, pode ser?",
     ]) {
-      expect(corpoVaiBemEmVoz(texto), texto).toBeNull();
+      expect(corpoVaiBemEmVoz(curta), curta).toBe("texto_curto");
     }
+  });
+
+  it("fala o que é longo: acima do limiar vai bem em voz", () => {
+    expect(corpoVaiBemEmVoz("a".repeat(FALA_CURTA_MAX_CHARS))).toBeNull();
+    expect(corpoVaiBemEmVoz("a".repeat(FALA_CURTA_MAX_CHARS + 1))).toBeNull();
+  });
+
+  it("a régua vem DEPOIS dos vetos: fala curta COM link continua texto_tem_link", () => {
+    // Se o tamanho viesse primeiro, uma fala curta com link escaparia como
+    // `texto_curto` e um dia alguém "corrigiria" o lint para voz.
+    expect(corpoVaiBemEmVoz("veja https://x.example")).toBe("texto_tem_link");
+    expect(corpoVaiBemEmVoz("manda pra mim@empresa.com")).toBe("texto_tem_email");
+  });
+
+  it("a medição do roteiro: nenhuma fala de [TEXTO] passa, toda [ÁUDIO] passa", () => {
+    // As 7 falas [TEXTO] medidas no prompt (37-97 chars) e a menor [ÁUDIO] (149).
+    for (const t of [
+      "Há quanto tempo você vem sentindo esses sintomas?",
+      "Entendi, qual é o seu peso e sua altura?",
+      "Você faz o uso de bebidas alcoólicas?",
+    ]) {
+      expect(corpoVaiBemEmVoz(t), t).not.toBeNull();
+    }
+    const menorAudio =
+      "Se você já ouviu os áudios que eu te enviei aqui acima, explicando a causa dessa doença, me informa há quanto tempo você vem sentindo esses sintomas.";
+    expect(menorAudio.length).toBeGreaterThanOrEqual(149);
+    expect(corpoVaiBemEmVoz(menorAudio)).toBeNull();
   });
 });
