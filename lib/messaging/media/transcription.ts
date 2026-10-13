@@ -132,37 +132,70 @@ export function elevenLabsTranscriptionProvider(
 ): TranscriptionProvider {
   const base = (creds.baseUrl || ELEVENLABS_STT_BASE_URL).trim().replace(/\/+$/, "");
   const model = creds.model || ELEVENLABS_STT_MODEL;
+  // POOL, não uma chave só: a cota do Scribe é POR CHAVE, e a operação tem o
+  // pool do TTS (dez chaves). Aceita lista separada por vírgula em
+  // `TRANSCRIPTION_API_KEY` e RODIZIA entre elas, começando de onde a última
+  // parou — assim o consumo se espalha e nenhuma esgota antes das outras.
+  // Sem isto, uma chave só queima e a transcrição para de novo (o sintoma que o
+  // operador via era "o agente não escuta o áudio do cliente").
+  const chaves = (chaveDoPool(creds) ?? "")
+    .split(",")
+    .map((k) => k.trim())
+    .filter((k) => k !== "");
+  if (chaves.length === 0) {
+    return { transcribe: async () => "" };
+  }
+  let proxima = 0;
+
   return {
     async transcribe(audio, mime) {
-      const form = new FormData();
-      form.append(
-        "file",
-        new Blob([new Uint8Array(audio)], { type: mime.split(";")[0]!.trim() }),
-        `audio.${extFor(mime)}`,
-      );
-      form.append("model_id", model);
-      // O idioma declarado evita a alucinação da detecção automática em áudio
-      // curto/ruidoso (mesma razão do `camposDeIdioma` da OpenAI); o serviço
-      // espera o código ISO-639-1, que é o que `TRANSCRIPTION_LANGUAGES` traz.
-      const idioma = (creds.languages ?? [])[0];
-      if (idioma) form.append("language_code", idioma);
-      const res = await fetchImpl(`${base}/speech-to-text`, {
-        method: "POST",
-        headers: { "xi-api-key": creds.apiKey },
-        body: form,
-      });
-      if (!res.ok) throw new Error(`transcription_${res.status}`);
-      const json = (await res.json()) as { text?: string };
-      return json.text ?? "";
+      const inicio = proxima;
+      let ultimoErro: string | null = null;
+      for (let i = 0; i < chaves.length; i++) {
+        const idx = (inicio + i) % chaves.length;
+        // O FormData não se reaproveita entre tentativas: o corpo é consumido.
+        const form = new FormData();
+        form.append(
+          "file",
+          new Blob([new Uint8Array(audio)], { type: mime.split(";")[0]!.trim() }),
+          `audio.${extFor(mime)}`,
+        );
+        form.append("model_id", model);
+        const idioma = (creds.languages ?? [])[0];
+        if (idioma) form.append("language_code", idioma);
+
+        const cabecalho = new Headers();
+        cabecalho.set("xi-api-key", chaves[idx]!);
+        const res = await fetchImpl(`${base}/speech-to-text`, {
+          method: "POST",
+          headers: cabecalho,
+          body: form,
+        });
+        if (res.ok) {
+          proxima = (idx + 1) % chaves.length;
+          const json = (await res.json()) as { text?: string };
+          return json.text ?? "";
+        }
+        ultimoErro = `transcription_${res.status}`;
+        // 401/402/429 são da CHAVE (cota/limite) — vale tentar a próxima.
+        // Qualquer outro status é do pedido, e insistir só gastaria as boas.
+        if (res.status !== 401 && res.status !== 402 && res.status !== 429) break;
+      }
+      throw new Error(ultimoErro ?? "transcription_sem_chave");
     },
   };
 }
 
 /**
- * O transcriber do serviço declarado pela INSTALAÇÃO, escolhido pelo endereço:
- * o ElevenLabs tem protocolo próprio e precisa do ramo dele; qualquer outro
- * endereço continua no caminho OpenAI-compatível de sempre.
+ * Lê a chave (ou o pool) do campo de credencial. Existe como função por um
+ * motivo prático: a expressão inline era reescrita por mascaramento de segredo
+ * ao gravar este arquivo, o que quebrou a sintaxe uma vez. Aqui a leitura fica
+ * em um lugar só.
  */
+function chaveDoPool(creds: TranscriptionCreds): string | undefined {
+  return creds["apiKey"];
+}
+
 export function transcriberDaInstalacao(
   creds: TranscriptionCreds,
   fetchImpl: typeof fetch = fetch,
