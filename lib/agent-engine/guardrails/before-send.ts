@@ -71,6 +71,7 @@ import { detectHumanPromise } from './human-promise';
 import { detectarVazamentoInterno, renderVetoDeVazamento } from './vazamento-interno';
 import { detectarAfirmacaoClinica, renderVetoDeAfirmacaoClinica } from './afirmacao-clinica';
 import { detectarEncaminhamento, renderVetoDeEncaminhamento } from './encaminhamento';
+import { detectarMidiaPrometida, renderVetoDeMidiaPrometida } from './midia-prometida';
 // Módulo PURO de propósito (`capabilities`, não `index`): o seam não arrasta o
 // adapter — e com ele o cliente HTTP do canal — para dentro do worker.
 import { capabilitiesOf, DEFAULT_CHANNEL_PROVIDER } from '@/lib/channels/capabilities';
@@ -242,6 +243,18 @@ export interface GateContext {
    *    quando a organização ligou a camada.
    */
   clinicalClaimEnforced?: boolean;
+  /**
+   * Arma o `midiaPrometidaGate` — barra a mensagem que ANUNCIA uma mídia (depoimento,
+   * guia, foto) sem a ferramenta de envio ter rodado neste turno. Ver
+   * `./midia-prometida.ts` para o defeito medido (13 promessas de mídia em 4 dias, 6
+   * sem entrega — o cliente é avisado dos depoimentos e fica sem eles).
+   *
+   * `active` = o agente TEM ferramenta de mídia neste turno. Sem ela não há promessa a
+   * cobrar (um agente que só manda texto não pode ser vetado por citar um vídeo que não
+   * existe para ele). `midiaEnviadaNesteTurno` = algum `send_message` COM código já
+   * executou — a legenda do próprio vídeo que está saindo é promessa legítima.
+   */
+  midiaPrometida?: { active: boolean; midiaEnviadaNesteTurno: boolean };
   /**
    * Arma o `encaminhamentoGate` — a régua que barra a mensagem em que o agente RECUSA
    * o produto ("o FIGNAR não é indicado") ou manda a pessoa procurar médico/SUS.
@@ -593,6 +606,45 @@ export const encaminhamentoGate: Gate = {
       // detail LOGADO e persistido: só as CATEGORIAS (rótulos nossos, fechados),
       // nunca o trecho — a frase barrada pode conter o quadro clínico do paciente.
       detail: { encaminhamento_kinds: achado.categorias.join(',') },
+    };
+  },
+};
+
+/**
+ * Gate de ENTREGA PROMETIDA — barra a mensagem que ANUNCIA uma mídia (depoimento,
+ * guia, foto) sem que a ferramenta que a envia tenha sido chamada NESTE turno.
+ * Ver `./midia-prometida.ts` para o defeito medido e para o que ele não pega.
+ *
+ * Mesmo formato do `agendaStallGate` logo acima: é uma promessa de AÇÃO PRÓPRIA que
+ * depende de ferramenta não executada. A diferença é o objeto — lá é horário, aqui é
+ * anexo — e a posição: 6.9, colado nele, porque os dois compartilham o campo
+ * `ctx.midiaPrometida` (o call site sabe se o `send_message` levou código de mídia).
+ *
+ * ─── Por que o gate existe, e não só a instrução no prompt ────────────────
+ *
+ * MEDIDO (13/10, cliente Wellington): o agente avisou em nota de voz "vou te mandar
+ * abaixo os últimos depoimentos dos nossos pacientes" e não mandou vídeo nenhum —
+ * 13 promessas de mídia em 4 dias, 6 sem entrega. O mesmo já tinha acontecido com o
+ * guia alimentar antes de ele ser ligado. O dano é o pior tipo: prova social anunciada
+ * e não entregue, no ponto exato em que a venda se decide.
+ *
+ * ⚠️ `midiaEnviadaNesteTurno` (qualquer `send_message` COM código de mídia já
+ * executado no turno) alivia: a promessa na legenda de um vídeo que está saindo é
+ * legítima. Quem não conhece o campo fica no-op, como o `agenda`.
+ */
+export const midiaPrometidaGate: Gate = {
+  name: 'midia_prometida',
+  evaluate: (ctx) => {
+    if (ctx.midiaPrometida === undefined || !ctx.midiaPrometida.active) return { pass: true };
+    if (ctx.midiaPrometida.midiaEnviadaNesteTurno) return { pass: true };
+    const achado = detectarMidiaPrometida(ctx.body);
+    if (!achado.achou) return { pass: true };
+    return {
+      pass: false,
+      code: 'midia_prometida_sem_envio',
+      reason: renderVetoDeMidiaPrometida(achado.categorias),
+      // detail LOGADO e persistido: só as CATEGORIAS (rótulos nossos, fechados).
+      detail: { midia_kinds: achado.categorias.join(',') },
     };
   },
 };
@@ -1027,6 +1079,7 @@ export const BEFORE_SEND_GATES: readonly Gate[] = [
   clinicalClaimGate,
   encaminhamentoGate,
   agendaStallGate,
+  midiaPrometidaGate,
   disclosureGate,
 ];
 
@@ -1177,6 +1230,17 @@ export interface RunBeforeSendArgs {
    * no-op (retrocompatível com todo caller que não conhece agenda, ex.: `followup-turn.ts`).
    */
   agenda?: GateContext['agenda'];
+  /**
+   * Arma o `midiaPrometidaGate` para ESTA tentativa — ver
+   * `GateContext.midiaPrometida`. Ausente = gate no-op (retrocompatível com todo
+   * caller que não conhece mídia, ex.: `followup-turn.ts`).
+   *
+   * `active` = o agente tem as ferramentas de mídia neste turno (sem elas não há o
+   * que cumprir); `midiaEnviadaNesteTurno` = algum `send_message` COM código de mídia
+   * já executou com sucesso neste turno (a legenda que anuncia o vídeo que está saindo
+   * é promessa legítima, e sem este campo o gate vetaria o envio certo).
+   */
+  midiaPrometida?: GateContext['midiaPrometida'];
   /** Ver `GateContext.followup`. Ausente = o `casePromiseGate` não alivia nada. */
   followup?: GateContext['followup'];
   /**
@@ -1487,6 +1551,7 @@ export async function runBeforeSend(args: RunBeforeSendArgs): Promise<BeforeSend
       // desarmar explicitamente — o `?? true` é sobre o DEFAULT, não sobre a escolha.
       encaminhamentoEnforced: args.enforceEncaminhamento ?? true,
       ...(args.agenda !== undefined ? { agenda: args.agenda } : {}),
+      ...(args.midiaPrometida !== undefined ? { midiaPrometida: args.midiaPrometida } : {}),
       ...(args.followup !== undefined ? { followup: args.followup } : {}),
     };
 

@@ -1165,6 +1165,20 @@ export function temFerramentaDeAgenda(toolIds: readonly string[]): boolean {
 }
 
 /**
+ * As ferramentas que ENVIAM mídia — foto de produto, vídeo de marca e documento do
+ * catálogo saem todas por `send_message` (com `produto_codigo`, `video_codigo` ou
+ * `documento_codigo`). É o que arma o `midiaPrometidaGate`: sem essa capacidade o
+ * agente não tem como cumprir uma promessa de anexo, e vetá-lo por citar um vídeo não
+ * teria cura.
+ */
+const MIDIA_TOOL_NAMES = new Set(['send_message']);
+
+/** O agente TEM ferramenta de mídia neste turno (arma o `midiaPrometidaGate`). */
+export function temFerramentaDeMidia(toolIds: readonly string[]): boolean {
+  return toolIds.some((t) => MIDIA_TOOL_NAMES.has(t));
+}
+
+/**
  * As ferramentas de agenda que ESTE agente tem — a lista que o veto do
  * `agendaStallGate` nomeia.
  *
@@ -2970,6 +2984,12 @@ async function executarTurnoDoAgente(
   // as tools do modelo rodam em passos anteriores do mesmo loop, o valor já está certo
   // quando o modelo decide mandar a resposta.
   let agendaToolCalledThisTurn = false;
+  // Mídia PROMETIDA e não entregue (`midiaPrometidaGate`): marca quando ALGUM
+  // `send_message` com código de mídia (foto/vídeo/documento) executa com sucesso neste
+  // turno. A promessa na legenda do vídeo que está saindo é legítima — sem esta marca o
+  // gate vetaria o envio certo. Medido: 6 de 13 promessas de mídia em 4 dias saíram sem
+  // anexo (cliente avisado dos depoimentos e sem eles).
+  let midiaEnviadaNesteTurno = false;
   // Lido pelo `casePromiseGate` (#1873): true só depois de `schedule_followup` AGENDAR com
   // sucesso neste turno. Libera apenas a promessa de retorno do próprio assistente.
   let followupAgendadoNesteTurno = false;
@@ -3681,6 +3701,14 @@ async function executarTurnoDoAgente(
               ferramentas: agentConfig === null ? [] : ferramentasDeAgendaDoAgente(agentConfig.toolIds),
               toolCalledThisTurn: agendaToolCalledThisTurn,
             },
+            // Entrega prometida: `active` é o agente ter QUALQUER ferramenta que envia mídia
+            // (sem ela não há promessa a cobrar — um agente só-texto não pode ser vetado por
+            // citar um vídeo que não existe para ele). A marca de mídia já enviada vem do
+            // call site do `send_message`, como a agenda.
+            midiaPrometida: {
+              active: agentConfig !== null && temFerramentaDeMidia(agentConfig.toolIds),
+              midiaEnviadaNesteTurno,
+            },
             followup: {
               disponivel: rawTools.schedule_followup !== undefined,
               agendadoNesteTurno: followupAgendadoNesteTurno,
@@ -4123,6 +4151,15 @@ async function executarTurnoDoAgente(
           }
           const outcome = chain.outcome;
           outcomes.push(outcome);
+          // Mídia ENTREGUE neste turno — libera o `midiaPrometidaGate` para as mensagens
+          // seguintes do mesmo turno (a legenda do vídeo que acabou de sair é promessa
+          // legítima). Marca no SUCESSO, não na intenção, igual ao `agendaToolCalledThisTurn`.
+          if (
+            outcome.kind === 'sent' &&
+            (pediuFoto || pediuVideo || pediuDocumento)
+          ) {
+            midiaEnviadaNesteTurno = true;
+          }
           if (outcome.kind === 'sent' && pendingCitations.length > 0) {
             try {
               await pool.query(
@@ -4763,6 +4800,10 @@ async function executarTurnoDoAgente(
                 active: previewContext.agenda?.active ?? false,
                 ferramentas: previewContext.agenda?.ferramentas ?? [],
                 toolCalledThisTurn: agendaToolCalledThisTurn,
+              },
+              midiaPrometida: {
+                active: previewContext.agenda?.active ?? false,
+                midiaEnviadaNesteTurno,
               },
             }),
             // #2490 — a MESMA `prepararFotosDoProduto` do caminho de produção,
