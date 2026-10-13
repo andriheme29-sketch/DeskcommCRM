@@ -454,7 +454,14 @@ export function createSupabaseSilenceSweepDb(admin: SupabaseClient): SilenceSwee
           active_version_id: row.active_version_id,
           kind: parsed.data.kind,
           threshold_minutes: parsed.data.params.threshold_minutes,
-          segments: parsed.data.kind === "silence" ? (parsed.data.params.segments ?? []) : [],
+          // ⚠️ O `agente_sem_resposta` TAMBÉM lê `segments` — antes esta linha
+          // forçava `[]` para ele, e a lista vazia desarmava o filtro por marca
+          // (`loadSilentContactIds`, mais abaixo). Sem o filtro, a retentativa da
+          // Kenia (Hidraliso) inscrevia lead do Dr. Carlos (Fignar) e vice-versa:
+          // cada fluxo contava as PRÓPRIAS duas tentativas, e o mesmo cliente
+          // recebia 6 mensagens de dois produtos. A instalação tem dois produtos
+          // separados; a marca vive em `contacts.tags`.
+          segments: parsed.data.params.segments ?? [],
           reentry_pause_minutes: parsed.data.kind === "silence" ? (parsed.data.params.reentry_pause_minutes ?? 0) : 0,
           ...(parsed.data.kind === "silence" && parsed.data.params.max_silence_minutes
             ? { max_silence_minutes: parsed.data.params.max_silence_minutes }

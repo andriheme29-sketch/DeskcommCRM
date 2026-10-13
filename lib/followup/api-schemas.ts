@@ -102,10 +102,21 @@ export const triggerConfigSchema = z.discriminatedUnion("kind", [
   // cliente tá conversando e para de responder; o agente persiste duas
   // tentativas de 3 em 3 horas". `threshold_minutes` é a espera antes de cada
   // toque (o "3h"), e a `escada` do modelo decide quantos toques há.
+  //
+  // ⚠️ `segments` AQUI É SEGURANÇA, NÃO CONVENIÊNCIA. A instalação roda DOIS
+  // produtos separados (Fignar/Dr. Carlos e Hidraliso/Kenia), com funil,
+  // remarketing e agente próprios — e o contato carrega a marca em
+  // `contacts.tags` (`fignar` / `hidraliso`). Sem o filtro, a retentativa da
+  // Kenia inscrevia lead do Dr. Carlos e VICE-VERSA, cada fluxo contando as suas
+  // próprias "2 tentativas": o cliente do Fignar recebeu 6 mensagens de
+  // follow-up de dois produtos diferentes (medido: 19 contatos nos dois fluxos).
+  // O `agente_sem_resposta` era o ÚNICO gatilho sem `segments` — o sweep forçava
+  // `[]` e o filtro por marca nunca cortava.
   z.strictObject({
     kind: z.literal("agente_sem_resposta"),
     params: z.strictObject({
       threshold_minutes: z.number().int().min(5).max(10_080),
+      segments: z.array(z.string()).optional(),
     }),
     ...CANCEL_ON_REPLY,
   }),
