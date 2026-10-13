@@ -91,6 +91,11 @@ import {
   type DocumentoParaEnvio,
 } from './documentos-do-catalogo';
 import {
+  copiarImagemNoStorage,
+  prepararImagemDoCatalogo,
+  type ImagemParaEnvio,
+} from './imagens-do-catalogo';
+import {
   esperaDoAudio,
   prepararAudioDoTurno,
   subirAudioNoStorage,
@@ -304,6 +309,17 @@ export const AGENT_TOOL_DEFS = {
           'código de um MATERIAL em PDF do catálogo (ex.: `plano-alimentar`): o arquivo vai ' +
             'junto como anexo e o texto vira a legenda. É assim que o guia alimentar chega ao ' +
             'cliente, na etapa em que o roteiro promete. Não se combina com foto, vídeo nem áudio.',
+        ),
+      imagem_codigo: z
+        .string()
+        .trim()
+        .optional()
+        .describe(
+          'código de uma IMAGEM de marca do catálogo (ex.: `composicao`, `precos-1`): a imagem ' +
+            'vai junto como foto e o texto vira a legenda. É assim que a tabela de composição e ' +
+            'as tabelas de preço chegam ao cliente. Não se combina com foto de produto, vídeo, ' +
+            'documento nem áudio. Para mandar DUAS imagens na mesma etapa (ex.: `precos-1` e ' +
+            '`precos-2`), faça DUAS chamadas seguidas neste turno, uma por código.',
         ),
       enviar_como_audio: z
         .boolean()
@@ -3302,7 +3318,7 @@ async function executarTurnoDoAgente(
     }),
     send_message: tool({
       ...AGENT_TOOL_DEFS.send_message,
-      execute: async ({ body: corpoDoModelo, produto_codigo, video_codigo, documento_codigo, enviar_como_audio, peso_kg, altura_cm }) => {
+      execute: async ({ body: corpoDoModelo, produto_codigo, video_codigo, documento_codigo, imagem_codigo, enviar_como_audio, peso_kg, altura_cm }) => {
         tentativasDeEnvio += 1;
         // O texto sai no formato do WhatsApp — sem `\n` literal nem
         // `**negrito**` de Markdown na tela do cliente. Antes de qualquer gate,
@@ -3412,28 +3428,44 @@ async function executarTurnoDoAgente(
         const pediuFoto = produto_codigo !== undefined && produto_codigo.trim() !== '';
         const pediuVideo = video_codigo !== undefined && video_codigo.trim() !== '';
         const pediuDocumento = documento_codigo !== undefined && documento_codigo.trim() !== '';
-        if (enviar_como_audio === true && (pediuFoto || pediuVideo)) {
+        const pediuImagem = imagem_codigo !== undefined && imagem_codigo.trim() !== '';
+        if (enviar_como_audio === true && (pediuFoto || pediuVideo || pediuImagem)) {
           return {
             ok: false,
             error: {
               code: 'audio_ou_midia',
               message:
-                'Esta chamada pediu áudio E mídia (foto/vídeo) ao mesmo tempo. Escolha UM caminho: ' +
-                'chame send_message só com `enviar_como_audio: true` para a nota de voz, só com ' +
-                '`produto_codigo` para as fotos, ou só com `video_codigo` para o vídeo.',
+                'Esta chamada pediu áudio E mídia (foto/vídeo/imagem) ao mesmo tempo. Escolha UM ' +
+                'caminho: chame send_message só com `enviar_como_audio: true` para a nota de voz, só ' +
+                'com `produto_codigo` para as fotos, só com `video_codigo` para o vídeo, ou só com ' +
+                '`imagem_codigo` para a imagem de marca.',
             },
           };
         }
-        if (pediuDocumento && (pediuFoto || pediuVideo || enviar_como_audio === true)) {
+        if (pediuDocumento && (pediuFoto || pediuVideo || pediuImagem || enviar_como_audio === true)) {
           return {
             ok: false,
             error: {
               code: 'documento_sozinho',
               message:
-                'Esta chamada pediu documento E outra mídia (foto, vídeo ou áudio). Escolha UM ' +
-                'caminho: chame send_message só com `documento_codigo` para o anexo, só com ' +
-                '`produto_codigo` para as fotos, só com `video_codigo` para o vídeo, ou só com ' +
-                '`enviar_como_audio: true` para a nota de voz.',
+                'Esta chamada pediu documento E outra mídia (foto, vídeo, imagem ou áudio). Escolha ' +
+                'UM caminho: chame send_message só com `documento_codigo` para o anexo, só com ' +
+                '`produto_codigo` para as fotos, só com `video_codigo` para o vídeo, só com ' +
+                '`imagem_codigo` para a imagem de marca, ou só com `enviar_como_audio: true` para a ' +
+                'nota de voz.',
+            },
+          };
+        }
+        if (pediuImagem && (pediuFoto || pediuVideo)) {
+          return {
+            ok: false,
+            error: {
+              code: 'imagem_ou_outra_midia',
+              message:
+                'Esta chamada pediu imagem de marca E foto de produto/vídeo ao mesmo tempo. Escolha ' +
+                'UM caminho: chame send_message só com `imagem_codigo` para a imagem de marca, só com ' +
+                '`produto_codigo` para as fotos do produto, ou só com `video_codigo` para o vídeo. ' +
+                'Se a etapa pede duas imagens de marca, faça duas chamadas seguidas, uma por código.',
             },
           };
         }
@@ -3494,6 +3526,23 @@ async function executarTurnoDoAgente(
             return { ok: false, error: { code: preparado.code, message: preparado.message } };
           }
           documentoDoCatalogo = preparado.documento;
+        }
+        // A IMAGEM DE MARCA (a composição nutricional, a língua, a caixinha, os
+        // preços): preparada ANTES da cadeia e fora do lock do número, como o
+        // vídeo e o documento. Código sem imagem cadastrada volta ao modelo como
+        // erro de ENSINO (ele corrige o código); imagem que não copia não derruba
+        // o envio (o texto segue como legenda vazia, degradar para só texto).
+        let imagemDoCatalogo: ImagemParaEnvio | null = null;
+        if (pediuImagem && !preview) {
+          const preparado = await prepararImagemDoCatalogo(pool, copiarImagemNoStorage(runLog), {
+            tenantId,
+            conversationId: input.conversationId,
+            codigo: imagem_codigo as string,
+          });
+          if (!preparado.ok) {
+            return { ok: false, error: { code: preparado.code, message: preparado.message } };
+          }
+          imagemDoCatalogo = preparado.imagem;
         }
         // O PRINT DO IMC. O cliente informou peso e altura: em vez de repetir os
         // números em texto, o turno desenha o "print" (com a faixa da OMS) e
@@ -3903,6 +3952,17 @@ async function executarTurnoDoAgente(
                     filename: documentoDoCatalogo.filename,
                   });
                 }
+                // IMAGEM DE MARCA (a composição, os preços, a língua, a caixinha):
+                // mensagem física só, sem fatiamento, com o `finalBody` como legenda —
+                // igual ao vídeo. É o caminho que faz a Etapa 6 mandar a TABELA
+                // NUTRICIONAL em vez de duas fotos de frasco.
+                if (imagemDoCatalogo !== null) {
+                  return await enviar(finalBody, {
+                    storagePath: imagemDoCatalogo.storagePath,
+                    mime: imagemDoCatalogo.mime,
+                    kind: 'image',
+                  });
+                }
                 // Cada foto é uma mensagem física: só vão as que cabem no que resta do teto
                 // do turno (a checagem de `max_sends_per_turn` acima roda uma vez, antes).
                 // O resto é medido ANTES DE CADA FOTO, depois do texto: o texto acima do
@@ -4156,7 +4216,7 @@ async function executarTurnoDoAgente(
           // legítima). Marca no SUCESSO, não na intenção, igual ao `agendaToolCalledThisTurn`.
           if (
             outcome.kind === 'sent' &&
-            (pediuFoto || pediuVideo || pediuDocumento)
+            (pediuFoto || pediuVideo || pediuDocumento || pediuImagem)
           ) {
             midiaEnviadaNesteTurno = true;
           }
