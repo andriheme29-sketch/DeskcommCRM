@@ -49172,8 +49172,12 @@ create table if not exists public.catalog_media (
 );
 alter table public.catalog_media
   drop constraint if exists catalog_media_tipo_valido;
+-- `documento` entrou com o material do catálogo (o guia alimentar da Etapa 8):
+-- o agente o entrega por `documento_codigo` no `send_message`. Sem isto no
+-- baseline, o próprio deploy re-cria a constraint antiga e a linha do PDF é
+-- recusada — foi o que abortou uma atualização em 2026-10-13.
 alter table public.catalog_media
-  add constraint catalog_media_tipo_valido check (tipo in ('video'));
+  add constraint catalog_media_tipo_valido check (tipo in ('video', 'documento'));
 alter table public.catalog_media
   drop constraint if exists catalog_media_codigo_forma;
 alter table public.catalog_media
