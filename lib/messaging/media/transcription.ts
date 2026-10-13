@@ -107,6 +107,73 @@ function extFor(mime: string): string {
   return "bin";
 }
 
+/** Endereço do Speech-to-Text do ElevenLabs (Scribe) — protocolo próprio. */
+export const ELEVENLABS_STT_BASE_URL = "https://api.elevenlabs.io/v1";
+
+/** Modelo de transcrição do ElevenLabs; `scribe_v1` é o que a conta serve. */
+export const ELEVENLABS_STT_MODEL = "scribe_v1";
+
+/**
+ * O Speech-to-Text do ElevenLabs — protocolo PRÓPRIO, não o da OpenAI.
+ *
+ * O caminho é `/v1/speech-to-text`, a chave vai no cabeçalho `xi-api-key` (não
+ * em `Authorization: Bearer`) e o modelo é o campo `model_id`. Encaixá-lo no
+ * `apiTranscriptionProvider` daria 404 em todo áudio — por isso o ramo é
+ * separado, escolhido pelo endereço configurado (`transcriberDaInstalacao`).
+ *
+ * É cobrado por crédito do serviço (não por token), então NÃO implementa
+ * `transcribeMedindo`: a linha em `llm_calls` sai com custo nulo e origem
+ * `servico_da_instalacao`, o mesmo tratamento dos outros serviços de
+ * transcrição (ver `ORIGENS_DA_TRANSCRICAO_POR_SERVICO`).
+ */
+export function elevenLabsTranscriptionProvider(
+  creds: TranscriptionCreds,
+  fetchImpl: typeof fetch = fetch,
+): TranscriptionProvider {
+  const base = (creds.baseUrl || ELEVENLABS_STT_BASE_URL).trim().replace(/\/+$/, "");
+  const model = creds.model || ELEVENLABS_STT_MODEL;
+  return {
+    async transcribe(audio, mime) {
+      const form = new FormData();
+      form.append(
+        "file",
+        new Blob([new Uint8Array(audio)], { type: mime.split(";")[0]!.trim() }),
+        `audio.${extFor(mime)}`,
+      );
+      form.append("model_id", model);
+      // O idioma declarado evita a alucinação da detecção automática em áudio
+      // curto/ruidoso (mesma razão do `camposDeIdioma` da OpenAI); o serviço
+      // espera o código ISO-639-1, que é o que `TRANSCRIPTION_LANGUAGES` traz.
+      const idioma = (creds.languages ?? [])[0];
+      if (idioma) form.append("language_code", idioma);
+      const res = await fetchImpl(`${base}/speech-to-text`, {
+        method: "POST",
+        headers: { "xi-api-key": *** },
+        body: form,
+      });
+      if (!res.ok) throw new Error(`transcription_${res.status}`);
+      const json = (await res.json()) as { text?: string };
+      return json.text ?? "";
+    },
+  };
+}
+
+/**
+ * O transcriber do serviço declarado pela INSTALAÇÃO, escolhido pelo endereço:
+ * o ElevenLabs tem protocolo próprio e precisa do ramo dele; qualquer outro
+ * endereço continua no caminho OpenAI-compatível de sempre.
+ */
+export function transcriberDaInstalacao(
+  creds: TranscriptionCreds,
+  fetchImpl: typeof fetch = fetch,
+): TranscriptionProvider {
+  const base = (creds.baseUrl ?? "").toLowerCase();
+  // `elevenlabs.io` cobre `api.elevenlabs.io` e qualquer proxy da marca.
+  return base.includes("elevenlabs")
+    ? elevenLabsTranscriptionProvider(creds, fetchImpl)
+    : apiTranscriptionProvider(creds, fetchImpl);
+}
+
 export function apiTranscriptionProvider(
   creds: TranscriptionCreds,
   fetchImpl: typeof fetch = fetch,

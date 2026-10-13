@@ -62,6 +62,7 @@ import { env } from "@/lib/env";
 import type { TranscriptionProvider } from "@/lib/messaging/media/transcription";
 import {
   apiTranscriptionProvider,
+  transcriberDaInstalacao,
   idiomasDaTranscricao,
   modeloDeTranscricaoEmVigor,
   type ORIGENS_DA_TRANSCRICAO_POR_SERVICO,
@@ -215,7 +216,11 @@ export async function decidirTranscricao(entrada: {
     });
     return {
       origem: "servico_da_instalacao",
-      transcriber: apiTranscriptionProvider({
+      // O PROTOCOLO sai do endereço declarado: o ElevenLabs (Scribe) tem
+      // caminho e cabeçalho próprios e precisa do adaptador dele; todo o
+      // resto segue no OpenAI-compatível. Sem isto, apontar o endereço para
+      // o ElevenLabs dava 404 e o áudio do cliente seguia sem ser ouvido.
+      transcriber: transcriberDaInstalacao({
         apiKey: servico,
         baseUrl: env.TRANSCRIPTION_BASE_URL || undefined,
         model: env.TRANSCRIPTION_MODEL || undefined,
