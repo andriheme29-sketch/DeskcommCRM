@@ -72,6 +72,17 @@ export const aiHandoffFromSentimentHandler: EventHandler = {
       reason: "low_sentiment",
       origem: "sentimento",
       leadId,
+      // ALERTA BRANDO: avisa o operador e NÃO larga o cliente.
+      //
+      // Sentimento baixo não é "o cliente quer um humano" — é o cliente
+      // desabafando a própria dor (numa venda de saúde, é o caso normal e é
+      // quando ele está mais pronto para fechar). Com o handoff completo, a IA
+      // era silenciada para sempre e as mensagens seguintes ficavam sem
+      // resposta: medido em 12/10 numa conversa que só fechou porque o
+      // operador entrou à mão duas vezes. Os OUTROS gates (pedido explícito de
+      // humano, jurídico, etapa crítica, orçamento) seguem tomando a conversa —
+      // esses sim são pedido de gente.
+      notificarSemSilenciar: true,
       metadata: {
         sentiment_score: sentimentScore,
         [CHAVES_DO_CLIMA.motor]: sentimentEngine,

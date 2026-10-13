@@ -99,6 +99,22 @@ export interface TriggerHandoffInput {
   motivoTexto?: string | null;
   leadId?: string | null;
   metadata?: Record<string, unknown>;
+  /**
+   * ALERTA BRANDO — avisa e NÃO toma a conversa.
+   *
+   * Existe para o sentimento (G2). `low_sentiment` não distingue "o cliente está
+   * irritado com o atendimento" de "o cliente está desabafando a própria dor", e
+   * numa venda de saúde o segundo caso é o normal — e é justamente quando o
+   * cliente está mais pronto para fechar. Silenciar a IA aí (o padrão deste
+   * orquestrador: `bot_silenced_until='infinity'`, "never reassume") deixa as
+   * mensagens seguintes do cliente sem resposta; medido em 12/10 numa conversa
+   * que terminou em venda fechada por intervenção manual do operador.
+   *
+   * Com `true`: o aviso ao cliente, o aviso na Central, o evento e a timeline
+   * acontecem normalmente — só a SILENCIADA e o desligamento do agente não. Quem
+   * quiser agir, age; a venda não morre esperando.
+   */
+  notificarSemSilenciar?: boolean;
 }
 
 export interface TriggerHandoffResult {
@@ -175,6 +191,7 @@ const SILENCE_INFINITY = "infinity";
 export async function triggerHandoff(
   input: TriggerHandoffInput,
 ): Promise<TriggerHandoffResult> {
+  const alertaBrando = input.notificarSemSilenciar === true;
   try {
     const admin = createAdminClient();
     const guard = async () => {
@@ -272,20 +289,30 @@ export async function triggerHandoff(
     // `bot_silenced_until > now()` is always true. supabase-js sends as text
     // and Postgres parses correctly for timestamptz columns.
     await guard();
+    // ALERTA BRANDO: registra o handoff para quem olha a fila e mantém a IA de
+    // pé. `bot_silenced_until` fica intacto (e `status` também): a conversa não
+    // sai do atendimento automático, então a próxima mensagem do cliente TEM
+    // resposta. Ver `notificarSemSilenciar`.
+    const camposDaConversa = alertaBrando
+      ? {
+          last_handoff_at: nowIso,
+          last_handoff_reason: input.reason,
+        }
+      : {
+          status: "pending",
+          bot_silenced_until: SILENCE_INFINITY,
+          last_handoff_at: nowIso,
+          last_handoff_reason: input.reason,
+          status_changed_at: nowIso,
+          // Fase 3 (review T5, finding 4): zera a aderência ao agente do router — se o
+          // bot for reativado, o router decide de novo (não reassume por inércia).
+          active_ai_agent_id: null,
+          active_intent: null,
+          active_agent_set_at: null,
+        };
     const { error: updErr } = await admin
       .from("conversations")
-      .update({
-        status: "pending",
-        bot_silenced_until: SILENCE_INFINITY,
-        last_handoff_at: nowIso,
-        last_handoff_reason: input.reason,
-        status_changed_at: nowIso,
-        // Fase 3 (review T5, finding 4): zera a aderência ao agente do router — se o
-        // bot for reativado, o router decide de novo (não reassume por inércia).
-        active_ai_agent_id: null,
-        active_intent: null,
-        active_agent_set_at: null,
-      })
+      .update(camposDaConversa)
       .eq("id", input.conversationId)
       .eq("organization_id", input.organizationId);
 
