@@ -70,6 +70,7 @@ import type { LgpdInput } from './lgpd/legal-basis';
 import { detectHumanPromise } from './human-promise';
 import { detectarVazamentoInterno, renderVetoDeVazamento } from './vazamento-interno';
 import { detectarAfirmacaoClinica, renderVetoDeAfirmacaoClinica } from './afirmacao-clinica';
+import { detectarEncaminhamento, renderVetoDeEncaminhamento } from './encaminhamento';
 // Módulo PURO de propósito (`capabilities`, não `index`): o seam não arrasta o
 // adapter — e com ele o cliente HTTP do canal — para dentro do worker.
 import { capabilitiesOf, DEFAULT_CHANNEL_PROVIDER } from '@/lib/channels/capabilities';
@@ -241,6 +242,13 @@ export interface GateContext {
    *    quando a organização ligou a camada.
    */
   clinicalClaimEnforced?: boolean;
+  /**
+   * Arma o `encaminhamentoGate` — a régua que barra a mensagem em que o agente RECUSA
+   * o produto ("o FIGNAR não é indicado") ou manda a pessoa procurar médico/SUS.
+   * Ausente = DESARMADO (mesma direção do `clinicalClaimEnforced`, pelo mesmo motivo:
+   * no caminho determinístico veto é drop silencioso). Quem arma é o turno do AGENTE.
+   */
+  encaminhamentoEnforced?: boolean;
   /**
    * Arma o `spinningGate`. **Ausente = ARMADO** — a direção segura aqui é a
    * oposta do `internalVocabularyEnforced` logo acima, e a assimetria é
@@ -543,6 +551,48 @@ export const clinicalClaimGate: Gate = {
       // detail é LOGADO e persistido: só as CATEGORIAS (rótulos nossos, fechados),
       // nunca o trecho — a frase barrada pode conter o nome da doença do paciente.
       detail: { clinical_kinds: achado.categorias.join(',') },
+    };
+  },
+};
+
+/**
+ * Gate de ENCAMINHAMENTO — barra a mensagem em que o agente recusa o produto
+ * ("o FIGNAR não é o tratamento indicado", "não é o foco do nosso tratamento") ou
+ * manda a pessoa procurar médico/posto/SUS. Ver `./encaminhamento.ts` para o
+ * defeito medido e para o que ele NÃO pega de propósito.
+ *
+ * Posição 6.85 de `BEFORE_SEND_GATES`: logo depois do `clinical_claim` e antes do
+ * `agenda_stall`, junto dos outros dois gates de vocabulário — as três olham a
+ * MESMA coisa (o texto que vai sair) e nenhuma depende de rede, então ficam
+ * adjacentes e baratas.
+ *
+ * ─── Por que é um gate de CÓDIGO e não uma tarefa do Jev ──────────────────
+ *
+ * O Jev é LLM: custa uma chamada por turno, tem disjuntor e é fail-open ("quem não
+ * sabe o que a base diz não pode proibir a frase"). Ele pode AJUDAR a classificar,
+ * mas não pode ser a única rede de uma frase que NUNCA pode chegar ao cliente.
+ * Esta régua é pura e determinística: o desfecho não depende de rede, cota nem
+ * provedor.
+ *
+ * ⚠️ ARMADO por padrão no turno do AGENTE (diferente do `clinicalClaim`, que é
+ * opt-in da organização): recusar o que se vende é defeito em QUALQUER operação
+ * desta instalação, não uma escolha de nicho. O veto volta ao laço como erro
+ * instrutivo e o modelo reescreve; no caminho determinístico fica no-op, pelo
+ * mesmo motivo do `internal_vocabulary` (veto ali é drop silencioso).
+ */
+export const encaminhamentoGate: Gate = {
+  name: 'encaminhamento',
+  evaluate: (ctx) => {
+    if (ctx.encaminhamentoEnforced !== true) return { pass: true };
+    const achado = detectarEncaminhamento(ctx.body);
+    if (!achado.achou) return { pass: true };
+    return {
+      pass: false,
+      code: 'encaminhamento',
+      reason: renderVetoDeEncaminhamento(achado.categorias),
+      // detail LOGADO e persistido: só as CATEGORIAS (rótulos nossos, fechados),
+      // nunca o trecho — a frase barrada pode conter o quadro clínico do paciente.
+      detail: { encaminhamento_kinds: achado.categorias.join(',') },
     };
   },
 };
@@ -975,6 +1025,7 @@ export const BEFORE_SEND_GATES: readonly Gate[] = [
   casePromiseGate,
   internalVocabularyGate,
   clinicalClaimGate,
+  encaminhamentoGate,
   agendaStallGate,
   disclosureGate,
 ];
@@ -1100,6 +1151,17 @@ export interface RunBeforeSendArgs {
    * (`camadaLigada(camadas.afirmacao_clinica, false)`).
    */
   enforceClinicalClaim?: boolean;
+  /**
+   * Arma o `encaminhamentoGate` — a régua que barra a mensagem em que o agente
+   * RECUSA o produto ("o FIGNAR não é indicado", "não é o foco") ou MANDA a pessoa
+   * procurar médico/posto/SUS. Ver `GateContext.encaminhamentoEnforced`.
+   *
+   * Diferente do `enforceClinicalClaim`: este é da OPERAÇÃO, não do cliente — o
+   * dono proibiu o encaminhamento sem exceção, porque quem veio pelo anúncio quer o
+   * produto e sair encaminhado é perda. Ausente (default) = no-op, para o caminho
+   * determinístico não virar drop silencioso.
+   */
+  enforceEncaminhamento?: boolean;
   /**
    * Desarma o `spinningGate` para ESTA tentativa. Ausente = armado (ver
    * `GateContext.spinningEnforced` para a razão da assimetria e para a conta que
@@ -1419,6 +1481,11 @@ export async function runBeforeSend(args: RunBeforeSendArgs): Promise<BeforeSend
         : {}),
       internalVocabularyEnforced: args.enforceInternalVocabulary ?? false,
       clinicalClaimEnforced: args.enforceClinicalClaim ?? false,
+      // ARMADO por padrão ao contrário dos irmãos acima: recusar o produto que se vende
+      // ou mandar o lead para o SUS é defeito em qualquer operação desta instalação (ver
+      // o cabeçalho do `encaminhamentoGate`). O caller que conhece o campo ainda pode
+      // desarmar explicitamente — o `?? true` é sobre o DEFAULT, não sobre a escolha.
+      encaminhamentoEnforced: args.enforceEncaminhamento ?? true,
       ...(args.agenda !== undefined ? { agenda: args.agenda } : {}),
       ...(args.followup !== undefined ? { followup: args.followup } : {}),
     };

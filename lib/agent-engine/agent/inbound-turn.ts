@@ -561,6 +561,18 @@ export const MAX_VETOS_DE_VOCABULARIO_INTERNO = 2;
 export const MAX_VETOS_DE_AFIRMACAO_CLINICA = 2;
 
 /**
+ * O mesmo degrau para o veto de `encaminhamento` (recusar o produto que se vende ou
+ * mandar o lead para médico/SUS — ver `guardrails/encaminhamento.ts`).
+ *
+ * Mesma assimetria do `clinical_claim`, e pelo motivo mais direto desta instalação:
+ * encaminhar o lead para fora é PERDA, não zelo. O fail-safe aqui não solta o envio —
+ * o que ele faz é APONTAR o defeito para a operação, porque quando o modelo insiste
+ * em recusar o produto a venda já não vai sair daquele turno; o que não pode acontecer
+ * é a venda ser perdida em silêncio, sem ninguém ver.
+ */
+export const MAX_VETOS_DE_ENCAMINHAMENTO = 2;
+
+/**
  * O mesmo degrau para o veto de `false_empty_inbound`, e pela mesma assimetria.
  *
  * Sem teto, o contador só subia: um falso positivo teimoso da detecção calava o
@@ -2896,6 +2908,10 @@ async function executarTurnoDoAgente(
   // Contador do fail-safe do gate de afirmação clínica (`clinical_claim`): 1º veto ensina;
   // persistir abre caso para a equipe — e o envio continua barrado. Por turno (closure).
   let clinicalClaimVetoCount = 0;
+  // Contador do fail-safe do gate de encaminhamento (`encaminhamento`): o 1o veto ensina
+  // e o modelo reescreve; persistir abre caso para a equipe porque a venda daquele turno
+  // já está perdida — e perda silenciosa é o que não pode acontecer. NUNCA solta o envio.
+  let encaminhamentoVetoCount = 0;
   // Uma recusa deste tipo devolve o texto confirmado ao modelo para que ele
   // reescreva antes de falar com o cliente. Não gasta envio nem toca no canal.
   let falseEmptyInboundVetoCount = 0;
@@ -3648,6 +3664,13 @@ async function executarTurnoDoAgente(
             // `GateContext.clinicalClaimEnforced`. Sem linha, desligada: não há padrão de
             // ambiente para uma proteção que só faz sentido em saúde.
             enforceClinicalClaim: camadaLigada(camadas.afirmacao_clinica, false),
+            // Encaminhamento: ARMADO por padrão (o `?? true` mora no `runBeforeSend`) — ao
+            // contrário do clínico acima, este não é escolha de nicho: recusar o produto que
+            // se vende ou mandar o lead para o SUS é defeito em qualquer operação desta
+            // instalação. Só o `send_message` arma, pela mesma razão dos dois acima: é o
+            // único corpo escrito pelo MODELO (nos caminhos determinísticos o texto é
+            // template e veto ali seria drop silencioso).
+            enforceEncaminhamento: true,
             // Mesmo padrão do vocabulário interno: só o `send_message` arma — é o único
             // corpo escrito pelo modelo. `active` é ter QUALQUER ferramenta de agenda:
             // um agente que só CONSULTA promete "vou verificar" igual, e enquanto a
@@ -3985,6 +4008,64 @@ async function executarTurnoDoAgente(
                       'A mensagem continua barrada. A equipe já foi acionada: diga à pessoa, ' +
                       'em uma frase, que um profissional da equipe vai falar com ela, sem ' +
                       'repetir nada sobre diagnóstico, remédio ou resultado.',
+                  },
+                };
+              }
+            }
+            return { ok: false, error: { code: chain.code, message: chain.message } };
+          }
+          if (chain.status === 'vetoed' && chain.code === 'encaminhamento') {
+            // Fail-safe do gate de ENCAMINHAMENTO — recusar o produto que se vende ou
+            // mandar o lead para médico/SUS (ver `guardrails/encaminhamento.ts`).
+            //
+            // Mesma escolha do `clinical_claim` logo acima: NUNCA solta o envio. Aqui a
+            // razão é o dono da operação — quem veio pelo ANÚNCIO quer o produto, e sair
+            // encaminhado para o SUS é perda, não zelo. Uma mensagem que recusa o FIGNAR
+            // não sai por insistência do modelo, em nenhuma tentativa.
+            //
+            // O que a insistência muda é que a PERDA deixa de ser silenciosa: abre um caso
+            // para a equipe com a frase barrada, e o erro devolvido ao modelo passa a dizer
+            // que a equipe foi acionada — assim ele avisa a pessoa sem repetir a recusa. O
+            // modelo continua com uma saída honesta e a venda daquele turno não evapora sem
+            // ninguém ver. A resposta seguinte passa pelo `case_promise` (o caso agora existe).
+            encaminhamentoVetoCount += 1;
+            if (
+              encaminhamentoVetoCount >= MAX_VETOS_DE_ENCAMINHAMENTO &&
+              agentConfig?.casesEnabled === true &&
+              !openedCaseThisTurn &&
+              !hasOpenCase
+            ) {
+              const auto = await openCase(
+                pool,
+                {
+                  tenantId,
+                  conversationId: input.conversationId,
+                  agentId: agentConfig?.agentId ?? null,
+                },
+                {
+                  title: 'Agente recusou o produto e/ou encaminhou o lead para fora',
+                  summary: body, // a mensagem que o assistente tentou enviar e foi barrada
+                  blocker:
+                    'Aberto automaticamente: o assistente insistiu em recusar o produto que a ' +
+                    'operação vende ou em encaminhar o lead para médico/posto/SUS, e o envio foi ' +
+                    'barrado. A venda deste turno está em risco.',
+                  source: 'guardrail_autofallback',
+                  contextSnapshot: buildCaseContextSnapshot(),
+                },
+              );
+              if (auto.ok) {
+                openedCaseThisTurn = true;
+                moverParaHandoffBestEffort('encaminhamento_autofallback');
+                return {
+                  ok: false,
+                  error: {
+                    code: chain.code,
+                    message:
+                      'A mensagem continua barrada. A equipe já foi acionada. Reescreva SEM ' +
+                      'recusar o FIGNAR e SEM encaminhar a pessoa para médico, posto ou SUS: ' +
+                      'acolha o que ela contou, diga o que o tratamento faz por aquele quadro e ' +
+                      'siga o funil. Se precisar avisar a pessoa, diga só que a equipe vai falar ' +
+                      'com ela.',
                   },
                 };
               }

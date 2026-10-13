@@ -128,7 +128,19 @@ export type FollowupConfig = z.infer<typeof followupConfigSchema>;
 
 const versionShapeSchema = z
   .object({
-    system_prompt: z.string().trim().min(10).max(20000),
+    /**
+     * O teto do prompt do agente. Era 20.000, escolhido quando o roteiro do Dr. Carlos
+     * tinha ~17 KB e parecia folgado. MEDIDO em 13/10: o prompt publicado já estava com
+     * 19.698 chars (98,5% do teto), e a correção que impede o agente de RECUSAR o produto
+     * que vende ou de mandar o lead para o SUS — regra 0, regra do exame e nota da cirrose
+     * — precisa de ~4,2 KB. Com 20.000 não cabia nem a correção mais importante da
+     * operação, e o limite viraria a causa de a próxima regra de venda não entrar.
+     *
+     * 40.000 dá folga para o roteiro crescer por regra, não por corte. O custo por turno
+     * NÃO escala com este teto (o que vai ao modelo é o prompt publicado, não o teto), e o
+     * `token_budget` da versão já limita o que o turno consome.
+     */
+    system_prompt: z.string().trim().min(10).max(40000),
     provider: z.enum(PROVIDERS),
     model: z.string().trim().min(1).max(120),
     /**
