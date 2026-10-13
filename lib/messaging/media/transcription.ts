@@ -148,7 +148,7 @@ export function elevenLabsTranscriptionProvider(
       if (idioma) form.append("language_code", idioma);
       const res = await fetchImpl(`${base}/speech-to-text`, {
         method: "POST",
-        headers: { "xi-api-key": *** },
+        headers: { "xi-api-key": creds.apiKey },
         body: form,
       });
       if (!res.ok) throw new Error(`transcription_${res.status}`);
