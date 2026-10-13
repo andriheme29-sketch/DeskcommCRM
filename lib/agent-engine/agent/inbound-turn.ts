@@ -86,6 +86,11 @@ import {
   type VideoParaEnvio,
 } from './videos-do-catalogo';
 import {
+  copiarDocumentoNoStorage,
+  prepararDocumentoDoCatalogo,
+  type DocumentoParaEnvio,
+} from './documentos-do-catalogo';
+import {
   esperaDoAudio,
   prepararAudioDoTurno,
   subirAudioNoStorage,
@@ -290,6 +295,15 @@ export const AGENT_TOOL_DEFS = {
           'código de uma MÍDIA de vídeo do catálogo (ex.: `depoimento`, `logistica`): o vídeo ' +
             'dela vai junto como anexo, e o texto vira a legenda. Use o código que o roteiro ' +
             'indicar na etapa de mídia. Não se combina com foto nem com áudio.',
+        ),
+      documento_codigo: z
+        .string()
+        .trim()
+        .optional()
+        .describe(
+          'código de um MATERIAL em PDF do catálogo (ex.: `plano-alimentar`): o arquivo vai ' +
+            'junto como anexo e o texto vira a legenda. É assim que o guia alimentar chega ao ' +
+            'cliente, na etapa em que o roteiro promete. Não se combina com foto, vídeo nem áudio.',
         ),
       enviar_como_audio: z
         .boolean()
@@ -3252,7 +3266,7 @@ async function executarTurnoDoAgente(
     }),
     send_message: tool({
       ...AGENT_TOOL_DEFS.send_message,
-      execute: async ({ body: corpoDoModelo, produto_codigo, video_codigo, enviar_como_audio, peso_kg, altura_cm }) => {
+      execute: async ({ body: corpoDoModelo, produto_codigo, video_codigo, documento_codigo, enviar_como_audio, peso_kg, altura_cm }) => {
         tentativasDeEnvio += 1;
         // O texto sai no formato do WhatsApp — sem `\n` literal nem
         // `**negrito**` de Markdown na tela do cliente. Antes de qualquer gate,
@@ -3361,6 +3375,7 @@ async function executarTurnoDoAgente(
         // de ENSINO — ele escolhe um caminho e chama de novo.
         const pediuFoto = produto_codigo !== undefined && produto_codigo.trim() !== '';
         const pediuVideo = video_codigo !== undefined && video_codigo.trim() !== '';
+        const pediuDocumento = documento_codigo !== undefined && documento_codigo.trim() !== '';
         if (enviar_como_audio === true && (pediuFoto || pediuVideo)) {
           return {
             ok: false,
@@ -3370,6 +3385,19 @@ async function executarTurnoDoAgente(
                 'Esta chamada pediu áudio E mídia (foto/vídeo) ao mesmo tempo. Escolha UM caminho: ' +
                 'chame send_message só com `enviar_como_audio: true` para a nota de voz, só com ' +
                 '`produto_codigo` para as fotos, ou só com `video_codigo` para o vídeo.',
+            },
+          };
+        }
+        if (pediuDocumento && (pediuFoto || pediuVideo || enviar_como_audio === true)) {
+          return {
+            ok: false,
+            error: {
+              code: 'documento_sozinho',
+              message:
+                'Esta chamada pediu documento E outra mídia (foto, vídeo ou áudio). Escolha UM ' +
+                'caminho: chame send_message só com `documento_codigo` para o anexo, só com ' +
+                '`produto_codigo` para as fotos, só com `video_codigo` para o vídeo, ou só com ' +
+                '`enviar_como_audio: true` para a nota de voz.',
             },
           };
         }
@@ -3414,6 +3442,22 @@ async function executarTurnoDoAgente(
             return { ok: false, error: { code: preparado.code, message: preparado.message } };
           }
           videoDoCatalogo = preparado.video;
+        }
+        // O DOCUMENTO DO CATÁLOGO (o guia alimentar da Etapa 8): preparado ANTES
+        // da cadeia e fora do lock do número, como o vídeo. Sem material
+        // cadastrado o modelo recebe o erro para corrigir o código; arquivo que
+        // não copia não derruba o envio (o texto segue).
+        let documentoDoCatalogo: DocumentoParaEnvio | null = null;
+        if (pediuDocumento && !preview) {
+          const preparado = await prepararDocumentoDoCatalogo(pool, copiarDocumentoNoStorage(runLog), {
+            tenantId,
+            conversationId: input.conversationId,
+            codigo: documento_codigo as string,
+          });
+          if (!preparado.ok) {
+            return { ok: false, error: { code: preparado.code, message: preparado.message } };
+          }
+          documentoDoCatalogo = preparado.documento;
         }
         // O PRINT DO IMC. O cliente informou peso e altura: em vez de repetir os
         // números em texto, o turno desenha o "print" (com a faixa da OMS) e
@@ -3740,7 +3784,7 @@ async function executarTurnoDoAgente(
                 Math.floor(Math.random() * (pacingDoTurno?.knobs.jitterMaxMs ?? 800));
               const enviar = (
                 corpo: string,
-                media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' },
+                media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' | 'document'; filename?: string | null },
               ): Promise<ChannelSendResult> => {
                 seq += 1;
                 return liveChannel().send({
@@ -3793,6 +3837,16 @@ async function executarTurnoDoAgente(
                     storagePath: videoDoCatalogo.storagePath,
                     mime: videoDoCatalogo.mime,
                     kind: 'video',
+                  });
+                }
+                // O DOCUMENTO (guia alimentar): anexo único, sem fatiamento. O
+                // `kind` é `document`, que o plano do canal manda por `sendFile`.
+                if (documentoDoCatalogo !== null) {
+                  return await enviar(finalBody, {
+                    storagePath: documentoDoCatalogo.storagePath,
+                    mime: documentoDoCatalogo.mime,
+                    kind: 'document',
+                    filename: documentoDoCatalogo.filename,
                   });
                 }
                 // Cada foto é uma mensagem física: só vão as que cabem no que resta do teto

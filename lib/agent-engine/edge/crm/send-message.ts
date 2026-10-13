@@ -74,7 +74,7 @@ export interface SendMessageInput {
    * precisam dizer o que são. Um `kind` obrigatório quebraria os dublês de
    * teste por um enfeite.
    */
-  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' };
+  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' | 'document'; filename?: string | null };
 }
 
 /**
@@ -107,7 +107,9 @@ export function corpoDoEnvio(
                 ? ('audio' as const)
                 : input.media.kind === 'video'
                   ? ('video' as const)
-                  : ('image' as const),
+                  : input.media.kind === 'document'
+                    ? ('document' as const)
+                    : ('image' as const),
             media_storage_path: input.media.storagePath,
             media_mime: input.media.mime,
           }

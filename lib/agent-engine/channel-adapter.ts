@@ -50,7 +50,18 @@ export interface ChannelSendInput {
    * que é o único uso que existia (`agent/fotos-do-produto.ts`). Quem fala é o
    * `agent/audio-do-turno.ts`.
    */
-  media?: { storagePath: string; mime: string; kind?: 'image' | 'audio' | 'video' };
+  media?: {
+    storagePath: string;
+    mime: string;
+    /**
+     * `document` entrou com o material do catálogo (o guia alimentar da Etapa 8):
+     * o WhatsApp o entrega como ANEXO, não como imagem/vídeo. O plano do canal
+     * (`wahaSendPlanFor`) manda o `document` por `sendFile`, com o `filename`
+     * que o cliente lê no anexo.
+     */
+    kind?: 'image' | 'audio' | 'video' | 'document';
+    filename?: string | null;
+  };
 }
 
 /**
