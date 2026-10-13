@@ -99,7 +99,7 @@ import {
 } from './audio-do-turno';
 import { sintetizarVoz, type ConfigDaVoz, type ProvedorDeVoz } from '@/lib/tts';
 import { resolverVozDoTurno } from '@/lib/tts/resolver';
-import { decidirModalidadeDeVoz, type ModoDeVoz } from './voz-do-turno';
+import { corpoParaVoz, decidirModalidadeDeVoz, type ModoDeVoz } from './voz-do-turno';
 import { renderImcPng } from './print-do-imc';
 import { loadEnv } from '../env';
 import { enqueueJob, rescheduleJob, type JobRow, type Queryable } from '../queue/queue';
@@ -3527,7 +3527,10 @@ async function executarTurnoDoAgente(
                 log: runLog,
               }),
             voz.subir,
-            { tenantId, conversationId: input.conversationId, texto: body },
+            // O que a VOZ fala e o corpo limpo (sem emoji e sem risada escrita,
+            // que a sintese leria em voz alta); o que o cliente LE, na mensagem
+            // registrada, segue sendo o body integral. Ver corpoParaVoz.
+            { tenantId, conversationId: input.conversationId, texto: corpoParaVoz(body) },
           );
           if (pronta.ok) {
             audioDaVoz = pronta.audio;

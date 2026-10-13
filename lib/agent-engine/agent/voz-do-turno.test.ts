@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   clientePedeVoz,
+  corpoParaVoz,
   corpoVaiBemEmVoz,
   decidirModalidadeDeVoz,
   ehModoDeVoz,
@@ -176,6 +177,38 @@ describe("modo decidir — qualquer sinal liga, e o silêncio é mudo", () => {
       falar: false,
       motivo: "sem_sinal_de_voz",
     });
+  });
+});
+
+describe("corpoParaVoz — o que a voz NÃO deve falar", () => {
+  it("tira o emoji: a síntese lia o '😅' em voz alta no meio do funil", () => {
+    expect(corpoParaVoz("Essa doença evolui rápido e vira cirrose 😅")).toBe(
+      "Essa doença evolui rápido e vira cirrose",
+    );
+    expect(corpoParaVoz("Oi! Tudo bem? 😁✅")).toBe("Oi! Tudo bem?");
+    expect(corpoParaVoz("Me conta por aqui, por favor 🙏")).toBe("Me conta por aqui, por favor");
+  });
+
+  it("tira o riso ESCRITO — 'kkkk' falado vira gargalhada sintetizada", () => {
+    expect(corpoParaVoz("combinado kkkk sem problema")).toBe("combinado sem problema");
+    expect(corpoParaVoz("hahaha que engraçado")).toBe("que engraçado");
+    expect(corpoParaVoz("rsrs tudo certo")).toBe("tudo certo");
+  });
+
+  it("PRESERVA o que carrega sentido falado: preço e texto normal", () => {
+    // O cifrão e o preço precisam sobreviver: é o que o cliente ouve.
+    const comPreco = "Hoje você paga R$ 297,00 no tratamento de 90 dias.";
+    expect(corpoParaVoz(comPreco)).toBe(comPreco);
+    const simples = "Entendi, qual é o seu peso e sua altura?";
+    expect(corpoParaVoz(simples)).toBe(simples);
+  });
+
+  it("não deixa pontuação órfã nem espaço duplo do emoji removido", () => {
+    expect(corpoParaVoz("Ficou alguma dúvida? 😊 Posso te passar os valores!")).toBe(
+      "Ficou alguma dúvida? Posso te passar os valores!",
+    );
+    expect(corpoParaVoz("Certo 😁")).toBe("Certo");
+    expect(corpoParaVoz("")).toBe("");
   });
 });
 

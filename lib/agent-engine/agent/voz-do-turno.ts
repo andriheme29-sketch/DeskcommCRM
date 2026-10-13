@@ -159,6 +159,40 @@ function semAcento(texto: string): string {
 }
 
 /**
+ * A VOZ DO ÁUDIO — o corpo TTS-ready: sem emoji, sem risada escrita.
+ *
+ * ⚠️ O problema NÃO é estético, e é por isso que isto mora no código e não no
+ * prompt. O modelo escreve como no WhatsApp — "😁", "🙏", "combinado kkkk" — e o
+ * corpo ia CRU para a síntese. A Fish lê o emoji: o cliente OUVE a risada numa
+ * parte séria do funil ("essa doença vai rapidamente para o grau 3, depois vira
+ * cirrose 😅" sai com risada no meio). Medido: 1 em cada 4 áudios do funil tinha
+ * emoji, em 140 áudios em dois dias. Pedir no prompt não resolve: é a mesma
+ * classe de defeito do marcador `[ÁUDIO]` no corpo — o modelo lembra às vezes.
+ *
+ * Tira o emoji e o riso escrito, e normaliza a pontuação que sobra. O TEXTO que
+ * o CRM registra NÃO muda: o que o cliente lê no histórico continua igual ao que
+ * sempre foi. Isto é só o que a voz fala.
+ *
+ * A lista por casamento de FAIXA Unicode (não um catálogo de emojis): cobrir
+ * cada emoji à mão garante que o próximo lançado passe batido, e a faixa pega o
+ * próximo junto. As exclusões são os dois sinais que CARREGAM sentido falado —
+ * o cifrão (preço) e o R (marca) —, os únicos emoji-like cujo texto importa.
+ */
+export function corpoParaVoz(corpo: string): string {
+  let t = corpo;
+  // Emoji e pictogramas, menos `$` e `®` (que têm valor falado).
+  t = t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu, (m) =>
+    m === "₹" || m === "💲" || m === "®" ? m : "",
+  );
+  // Riso escrito: vira SILÊNCIO, não vira palavra. "kkkk" falado sai como uma
+  // gargalhada sintetizada — pior que o silêncio, porque a voz é da marca.
+  t = t.replace(/\b(k{3,}|(?:ha){3,}|(?:rs){2,}|(?:he){3,})\b/gi, "");
+  // A pontuação que sobra de um emoji removido ("dúvida? 😊" -> "dúvida?  ")
+  t = t.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+([.,!?;:])/g, "$1").replace(/\s+$/gm, "");
+  return t.trim();
+}
+
+/**
  * A FRONTEIRA ENTRE ESCREVER E FALAR — abaixo disto a pergunta sai em TEXTO.
  *
  * Medido no ROTEIRO do funil (o Dr. Carlos, 21 falas marcadas): as falas de
