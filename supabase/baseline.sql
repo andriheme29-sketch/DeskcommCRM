@@ -49176,8 +49176,15 @@ alter table public.catalog_media
 -- o agente o entrega por `documento_codigo` no `send_message`. Sem isto no
 -- baseline, o próprio deploy re-cria a constraint antiga e a linha do PDF é
 -- recusada — foi o que abortou uma atualização em 2026-10-13.
+--
+-- `imagem` entrou com as mídias de MARCA do funil oficial (a tabela de
+-- composição nutricional, a língua, a caixinha, os preços): o agente as entrega
+-- por `imagem_codigo`. Mesmo raciocínio — e o MESMO defeito reincidiu em
+-- 2026-10-13, desta vez na v1.79.27: sem esta linha o deploy re-cria a
+-- constraint sem `imagem`, a linha da composição é recusada e a atualização
+-- aborta. Cada tipo novo que o agente passa a enviar PRECISA entrar aqui.
 alter table public.catalog_media
-  add constraint catalog_media_tipo_valido check (tipo in ('video', 'documento'));
+  add constraint catalog_media_tipo_valido check (tipo in ('video', 'documento', 'imagem'));
 alter table public.catalog_media
   drop constraint if exists catalog_media_codigo_forma;
 alter table public.catalog_media
