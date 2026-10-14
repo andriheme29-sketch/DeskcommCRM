@@ -420,9 +420,16 @@ describe("o call site — AST separa prévia sem job do turno operacional escolt
 
 describe("a fila trata veto de negócio como veto, não como incidente", () => {
   const fonteWorker = readFileSync(WORKER, "utf8").replace(/\s+/gu, " ");
+  // O último argumento dos dois desfechos é o lease RENOVADO pelo batimento, e
+  // não `claimOfJob(job)?.acquired_at` como era antes do conserto do turno
+  // lento: depois do primeiro batimento o `locked_at` do claim não vale mais, e
+  // passar ele aqui faz o desfecho perder a corrida contra o PRÓPRIO batimento
+  // (o turno inteiro seria descartado com o trabalho feito). A prova de que o
+  // batimento é quem manda está em `queue-lease-batimento.test.ts`; aqui o que
+  // se afirma é só o ROTEAMENTO terminal × não-terminal, que não mudou.
   const ROTEAMENTO =
-    "if (terminal) { await cancelJob(pool, job.id, workerId, errMsg(err), claimOfJob(job)?.acquired_at); } " +
-    "else { await failJob(pool, job.id, workerId, err, claimOfJob(job)?.acquired_at); }";
+    "if (terminal) { await cancelJob(pool, job.id, workerId, errMsg(err), lease); } " +
+    "else { await failJob(pool, job.id, workerId, err, lease); }";
 
   it("erro terminal vai para cancelJob; o resto continua em failJob", () => {
     expect(fonteWorker.length, "guarda de vacuidade: arquivo do worker vazio").toBeGreaterThan(1000);
@@ -435,7 +442,7 @@ describe("a fila trata veto de negócio como veto, não como incidente", () => {
 
   it("controle negativo: o detector acusa a volta do failJob", () => {
     const sabotado = fonteWorker.replace(
-      "await cancelJob(pool, job.id, workerId, errMsg(err), claimOfJob(job)?.acquired_at);",
+      "await cancelJob(pool, job.id, workerId, errMsg(err), lease);",
       "await failJob(pool, job.id, workerId, err, claimOfJob(job)?.acquired_at);",
     );
     expect(sabotado).not.toBe(fonteWorker);
