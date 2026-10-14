@@ -30,7 +30,11 @@ import { extrairJsonDoTexto } from '@/lib/agent-engine/texto/extrair-json-do-tex
 import type { Logger } from '../obs/logger';
 import type { ProviderRegistry } from '../edge/llm/providers';
 import type { LlmResolveOverride } from '../edge/llm/credentials';
-import { runModelCall, type LlmEdgeConfig } from '../edge/llm/run-model-call';
+import {
+  LlmBudgetExceededError,
+  runModelCall,
+  type LlmEdgeConfig,
+} from '../edge/llm/run-model-call';
 import {
   countPayloadTokens,
   type LeadContext,
@@ -169,25 +173,42 @@ async function runFlush(
     noteSink?: (note: { headline: string; body: string }) => void;
   },
 ): Promise<void> {
-  const call = await runModelCall(
-    db,
-    cfg,
-    {
-      tenantId: ids.tenantId,
-      leadId: ids.leadId,
-      ...(ids.jobId !== undefined ? { jobId: ids.jobId } : {}),
-      purpose: 'flush',
-      ...(args.llmOverride ? { llmOverride: args.llmOverride } : {}),
-      ...(args.model !== undefined ? { model: args.model } : {}),
-      messages: [
-        {
-          role: 'user',
-          content: buildTranscriptMessage(args.context, args.previousSummary, FLUSH_INSTRUCTION),
-        },
-      ],
-    },
-    { registry: deps.registry, log: deps.log },
-  );
+  // A CHAMADA fica sob o mesmo desfecho do parse (ver o cabeçalho de
+  // `maybeCompact`): `runModelCall` LANÇA em falha do provedor — inclusive no
+  // HTTP 200 com corpo que não é o JSON pedido — e essa exceção subia de um
+  // ponto AUXILIAR até derrubar o turno inteiro.
+  let call: Awaited<ReturnType<typeof runModelCall>>;
+  try {
+    call = await runModelCall(
+      db,
+      cfg,
+      {
+        tenantId: ids.tenantId,
+        leadId: ids.leadId,
+        ...(ids.jobId !== undefined ? { jobId: ids.jobId } : {}),
+        purpose: 'flush',
+        ...(args.llmOverride ? { llmOverride: args.llmOverride } : {}),
+        ...(args.model !== undefined ? { model: args.model } : {}),
+        messages: [
+          {
+            role: 'user',
+            content: buildTranscriptMessage(args.context, args.previousSummary, FLUSH_INSTRUCTION),
+          },
+        ],
+      },
+      { registry: deps.registry, log: deps.log },
+    );
+  } catch (err) {
+    // Mesma escolta dos outros auxiliares: o orçamento SOBE para a escolta do
+    // turno passar a conversa a uma pessoa; o resto degrada (o flush é
+    // best-effort por doutrina — "o flush nunca derruba o turno").
+    if (err instanceof LlmBudgetExceededError) throw err;
+    deps.log.warn(
+      'flush pré-compaction: chamada do modelo auxiliar falhou — nenhuma nota gravada',
+      { error: (err instanceof Error ? err.message : String(err)).slice(0, 200) },
+    );
+    return;
+  }
 
   let notes: z.infer<typeof flushOutputSchema>['notes'];
   try {
@@ -228,8 +249,21 @@ async function runFlush(
  * Compacta o histórico do lead quando ele cresce além do limiar. Retorna null (no-op)
  * quando o gatilho não bate — o turno segue com o transcript cru (capado por
  * get_lead_context). Quando dispara: roda o FLUSH (grava notas duráveis) e SÓ ENTÃO a
- * compaction (resumo estruturado com o modelo barato). Parse inválido da compaction →
- * log LOUD + null (degradação graciosa; o turno não quebra por um aux batch ruim).
+ * compaction (resumo estruturado com o modelo barato).
+ *
+ * DEGRADAÇÃO: as DUAS chamadas auxiliares (flush e compaction) ficam sob o mesmo
+ * desfecho — falha do provedor ou parse inválido viram log LOUD + null/return, e o
+ * turno do agente segue inteiro. Isto não é detalhe de estilo: `runModelCall` LANÇA
+ * (inclusive a HTTP 200, quando o corpo não é o JSON pedido), e um throw fora do
+ * `catch` de um ponto AUXILIAR sobe até `executarTurnoDoAgente` e mata o turno — o
+ * lead fica sem resposta nenhuma com o modelo do agente de pé. Medido nesta operação
+ * em 2026-10-14: 6 jobs `dead`, 5 tentativas cada, `last_error = 'Invalid JSON
+ * response'`, `turn_ok = 0`, `resp = 0`.
+ *
+ * A ÚNICA exceção é `LlmBudgetExceededError`, que SOBE de propósito (no flush e na
+ * compaction): a escolta de orçamento (`comHandoffSeOrcamentoAcabar`) é quem passa a
+ * conversa para uma pessoa, e um `catch` que engolisse tudo deixaria de fazer a
+ * passagem. Mesmo par (degradar, propagar) de `stage-classifier` e `jailbreak`.
  */
 export async function maybeCompact(
   db: pg.Pool,
@@ -267,31 +301,41 @@ export async function maybeCompact(
     deps,
   );
 
-  const call = await runModelCall(
-    db,
-    cfg,
-    {
-      tenantId: ids.tenantId,
-      leadId: ids.leadId,
-      ...(ids.jobId !== undefined ? { jobId: ids.jobId } : {}),
-      purpose: 'compaction',
-      ...(args.knobs.model !== undefined ? { model: args.knobs.model } : {}),
-      // Provider/credencial vêm JUNTO do modelo quando ele foi herdado do agente
-      // publicado — ver `aux-model-args.ts`.
-      ...(args.knobs.llmOverride !== undefined ? { llmOverride: args.knobs.llmOverride } : {}),
-      messages: [
-        {
-          role: 'user',
-          content: buildTranscriptMessage(
-            args.context,
-            args.previousSummary,
-            COMPACTION_INSTRUCTION,
-          ),
-        },
-      ],
-    },
-    { registry: deps.registry, log: deps.log },
-  );
+  let call: Awaited<ReturnType<typeof runModelCall>>;
+  try {
+    call = await runModelCall(
+      db,
+      cfg,
+      {
+        tenantId: ids.tenantId,
+        leadId: ids.leadId,
+        ...(ids.jobId !== undefined ? { jobId: ids.jobId } : {}),
+        purpose: 'compaction',
+        ...(args.knobs.model !== undefined ? { model: args.knobs.model } : {}),
+        // Provider/credencial vêm JUNTO do modelo quando ele foi herdado do agente
+        // publicado — ver `aux-model-args.ts`.
+        ...(args.knobs.llmOverride !== undefined ? { llmOverride: args.knobs.llmOverride } : {}),
+        messages: [
+          {
+            role: 'user',
+            content: buildTranscriptMessage(
+              args.context,
+              args.previousSummary,
+              COMPACTION_INSTRUCTION,
+            ),
+          },
+        ],
+      },
+      { registry: deps.registry, log: deps.log },
+    );
+  } catch (err) {
+    if (err instanceof LlmBudgetExceededError) throw err;
+    deps.log.warn(
+      'compaction: chamada do modelo auxiliar falhou — turno segue com transcript cru',
+      { error: (err instanceof Error ? err.message : String(err)).slice(0, 200) },
+    );
+    return null;
+  }
 
   try {
     return compactionOutputSchema.parse(extractJson(call.result.text));
