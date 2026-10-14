@@ -58,7 +58,8 @@ export interface DepsDoLoopDaFila<J> {
  * Roda até `deveParar()`. Resolve — nunca rejeita — porque o `shutdown` do worker
  * faz `await` nele antes de drenar os jobs em voo: uma rejeição aqui derrubaria o
  * processo com os jobs claimados presos em `running`, invisíveis até o
- * `QUEUE_VISIBILITY_TIMEOUT_MS` (10 minutos) — a cada `docker stop`.
+ * `QUEUE_VISIBILITY_TIMEOUT_MS` — a cada `docker stop`. (O valor do knob mora em
+ * `lib/agent-engine/env.ts`; não o repita aqui.)
  */
 export async function rodarLoopDaFila<J>(deps: DepsDoLoopDaFila<J>): Promise<void> {
   // O relógio só é consultado quando a rodada anterior voltou vazia. Sob carga o

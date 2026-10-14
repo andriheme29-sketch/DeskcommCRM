@@ -109,6 +109,7 @@ import {
   type CacheAlertKnobs,
 } from "@/lib/agent-engine/obs/metrics";
 import { rodarLoopDaFila } from "@/lib/agent-engine/queue/loop";
+import { intervaloDoBatimento } from "@/lib/agent-engine/queue/lease";
 import {
   adiarAteORecarregar,
   avisarFaltaDeSaldo,
@@ -118,6 +119,7 @@ import {
   jaNaoHaOQueResponder,
 } from "@/lib/agent-engine/queue/espera-de-saldo";
 import {
+  baterNoJob,
   cancelJob,
   claimJobs,
   completeJob,
@@ -447,6 +449,37 @@ export async function startWorker(
   };
 
   const runJob = async (job: JobRow): Promise<void> => {
+    // O lease deste worker para este job — sempre o ÚLTIMO `locked_at` que NÓS
+    // escrevemos. Começa no do claim e passa a ser o do batimento (`baterNoJob`).
+    // Os desfechos (complete/fail/cancel) usam ESTE valor como `acquiredAt`, nunca
+    // o do claim: depois do primeiro batimento o `locked_at` do claim não vale
+    // mais, e o desfecho perderia a guarda contra o próprio batimento.
+    let lease = claimOfJob(job)?.acquired_at;
+    let batendo = true;
+    // Sem batimento, `locked_at` mede "tempo desde o claim": um turno mais lento
+    // que `QUEUE_VISIBILITY_TIMEOUT_MS` seria re-claimado ENQUANTO AINDA RODA e o
+    // turno inteiro se perderia no `complete` ("lease perdido"). Ver `lease.ts`.
+    const heartbeat = setInterval(() => {
+      if (!batendo) return;
+      void baterNoJob(pool, job.id, workerId, lease)
+        .then((novo) => {
+          if (novo === null) {
+            // O reaper re-claimou o job: parar de bater. O batimento insiste só
+            // criaria a mentira de um lease vivo que não é mais nosso.
+            batendo = false;
+            log.warn("lease do job não é mais deste worker — batimento encerrado", {
+              job_id: job.id,
+              kind: job.kind,
+            });
+            return;
+          }
+          lease = novo;
+        })
+        .catch((err: unknown) =>
+          log.error("batimento do lease falhou", { job_id: job.id, error: errMsg(err) }),
+        );
+    }, intervaloDoBatimento(env.QUEUE_VISIBILITY_TIMEOUT_MS));
+    heartbeat.unref();
     try {
       const handler = handlers.get(job.kind);
       if (!handler) {
@@ -461,7 +494,7 @@ export async function startWorker(
       // esperava, alguém do nosso lado já respondeu o cliente, não há o que
       // responder — sair agora seria repetir quem já atendeu.
       if (esperouPorSaldo(job) && (await jaNaoHaOQueResponder(pool, job))) {
-        await completeJob(pool, job.id, workerId, undefined, claimOfJob(job)?.acquired_at);
+        await completeJob(pool, job.id, workerId, undefined, lease);
         log.info("job encerrado: a conversa foi respondida enquanto a IA esperava saldo", {
           job_id: job.id,
           kind: job.kind,
@@ -469,7 +502,7 @@ export async function startWorker(
         return;
       }
       await withServiceJob(pool, job, () => handler(job, pool, { workerId }));
-      await completeJob(pool, job.id, workerId, undefined, claimOfJob(job)?.acquired_at);
+      await completeJob(pool, job.id, workerId, undefined, lease);
       log.info("job concluído", { job_id: job.id, kind: job.kind });
       if (esperouPorSaldo(job)) {
         try {
@@ -508,7 +541,7 @@ export async function startWorker(
             workerId,
             err.protection.reavaliar_em,
             err.message,
-            claimOfJob(job)?.acquired_at ?? null,
+            lease ?? null,
           ],
         );
         return;
@@ -528,7 +561,7 @@ export async function startWorker(
           log.error("aviso de falta de saldo não entrou na Central", { job_id: job.id, error: errMsg(avisoErr) });
         }
         try {
-          await adiarAteORecarregar(pool, job, workerId, err, claimOfJob(job)?.acquired_at);
+          await adiarAteORecarregar(pool, job, workerId, err, lease);
         } catch (adiarErr) {
           log.error("espera de saldo indisponível — lease expira via reaper", {
             job_id: job.id,
@@ -565,9 +598,9 @@ export async function startWorker(
           await avisarRespostaDeCasoObsoleto(pool, job.organization_id, job.payload.case_id);
         }
         if (terminal) {
-          await cancelJob(pool, job.id, workerId, errMsg(err), claimOfJob(job)?.acquired_at);
+          await cancelJob(pool, job.id, workerId, errMsg(err), lease);
         } else {
-          await failJob(pool, job.id, workerId, err, claimOfJob(job)?.acquired_at);
+          await failJob(pool, job.id, workerId, err, lease);
         }
       } catch (failErr) {
         log.error("disposição do job indisponível — lease expira via reaper", {
@@ -579,6 +612,12 @@ export async function startWorker(
         // vale saber que isto aconteceu.
         Sentry.captureException(failErr);
       }
+    } finally {
+      // O batimento morre com o job — o lease só existe enquanto este `runJob`
+      // roda. Sem isto, o intervalo seguiria batendo num job já concluído e
+      // reescreveria `locked_at` de uma linha que já não é 'running'.
+      batendo = false;
+      clearInterval(heartbeat);
     }
   };
 

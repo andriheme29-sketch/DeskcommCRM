@@ -335,6 +335,38 @@ export async function failJob(
 }
 
 /**
+ * O BATIMENTO do lease: reescreve `locked_at = now()` sob a MESMA guarda de dono
+ * que `completeJob`/`failJob`/`cancelJob` usam (`locked_by` + o `locked_at` do
+ * claim). Devolve o `locked_at` novo (texto, microssegundos preservados) — o
+ * chamador guarda esse valor e o repassa como `acquiredAt` nas chamadas de
+ * desfecho, senão o próprio batimento faria o desfecho perder o lease.
+ *
+ * Devolve `null` quando a guarda não casa: o lease NÃO é mais deste worker
+ * (reaper re-claimou), e insistir seria mascarar a perda. Quem chama para de
+ * bater ao ver `null`.
+ *
+ * Por que existe: ver `lease.ts` — sem batimento, `locked_at` mede "tempo desde
+ * o claim", e um turno mais lento que `QUEUE_VISIBILITY_TIMEOUT_MS` é re-claimado
+ * enquanto ainda roda, com o turno INTEIRO perdido no `complete`. Medido nesta
+ * VPS: turnos de até 584 s contra um lease de 600 s.
+ */
+export async function baterNoJob(
+  db: Queryable,
+  jobId: string,
+  workerId: string,
+  acquiredAt?: string,
+): Promise<string | null> {
+  const { rows } = await db.query<{ locked_at: string }>(
+    `update job_queue set locked_at = now()
+      where id = $1 and status = 'running' and locked_by = $2
+        and ($3::timestamptz is null or locked_at = $3)
+      returning locked_at::text as locked_at`,
+    [jobId, workerId, acquiredAt ?? null],
+  );
+  return rows[0]?.locked_at ?? null;
+}
+
+/**
  * Cancela o job em definitivo (status 'failed', terminal) — veto PERMANENTE de
  * negócio (ex.: 403 is_blocked no sink, F2-06): não é incidente de sistema, então
  * nem retry nem 'dead' + alerta crítico (seria ruído de inbox para um opt-out).

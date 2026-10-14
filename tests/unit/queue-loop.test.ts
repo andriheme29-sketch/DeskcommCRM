@@ -126,7 +126,7 @@ describe("rodarLoopDaFila", () => {
     // O defeito que quase entrou: `sleep` de node:timers/promises REJEITA quando
     // o signal aborta. Sem o catch, a rejeição chega ao `await workerLoop` do
     // shutdown e derruba o processo antes do drain — os jobs já claimados ficam
-    // presos em 'running', invisíveis pelos 10 min do QUEUE_VISIBILITY_TIMEOUT_MS,
+    // presos em 'running', invisíveis pelo QUEUE_VISIBILITY_TIMEOUT_MS inteiro,
     // a cada `docker stop`. Remover o `catch { break }` torna este teste vermelho.
     const abortError = Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
 

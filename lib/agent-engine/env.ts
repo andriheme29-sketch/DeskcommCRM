@@ -70,7 +70,18 @@ const envSchema = z.object({
   // cada knob FAZ é dito aqui, que é semântica e não envelhece; onde mexer e o
   // que medir está em docs/runbooks/custo-e-cota-do-supabase.md.)
   QUEUE_MAX_CONCURRENCY: z.coerce.number().int().positive().default(8),
-  QUEUE_VISIBILITY_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+  // Quanto um job 'running' pode ficar sem dar sinal antes de o reaper
+  // (`reapExpiredJobs`) considerá-lo órfão. É o tempo de vida do LEASE, e quem o
+  // segura vivo é o batimento do consumidor (`lease.ts`): sem batimento, o job
+  // que roda mais que isto é re-claimado por outro worker e o `completeJob` do
+  // primeiro recusa commitar ("lease perdido") — o turno inteiro se perde.
+  //
+  // Era 600_000 (10 min) e estava a 16 s do turno mais lento MEDIDO nesta VPS
+  // (256 turnos concluídos, máx 584 s, p90 228 s, com o modelo free atrás de um
+  // gateway). Um teto folgado é o que dá margem para a cauda da distribuição —
+  // o batimento segura o caso normal; este valor cobre o caso em que o próprio
+  // batimento não roda (event loop travado). Ver `lib/agent-engine/queue/lease.ts`.
+  QUEUE_VISIBILITY_TIMEOUT_MS: z.coerce.number().int().positive().default(30 * 60_000),
   // Porta do /healthz (bind 0.0.0.0 no container; 0 = porta efêmera em teste).
   HEALTH_PORT: z.coerce.number().int().min(0).max(65_535).default(8787),
   // TETO de espera do laço da fila: com a fila vazia é quanto ele dorme entre uma
