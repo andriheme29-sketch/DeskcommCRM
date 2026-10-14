@@ -178,8 +178,49 @@ function semAcento(texto: string): string {
  * próximo junto. As exclusões são os dois sinais que CARREGAM sentido falado —
  * o cifrão (preço) e o R (marca) —, os únicos emoji-like cujo texto importa.
  */
+/**
+ * O VALOR MONETARIO QUE A VOZ CONSEGUE FALAR — por extenso, nunca com `R$`.
+ *
+ * Medido em 13/10/2026 (voz Fish `s2.1-pro-free`, transcricao Scribe v1, 3 rodadas
+ * por variante): a MESMA frase de oferta com `R$ 985`/`R$ 397` voltou da transcricao
+ * com numeros DIFERENTES a cada rodada — numa "997,00 / 285,00 / 99,80", na outra
+ * "188 / 29,97" —, enquanto a versao por extenso ("985 reais", "397 reais",
+ * "29 reais e 80 centavos") voltou correta em 3 de 3. O cliente OUVIA preco errado
+ * num audio de OFERTA, que e o pior lugar possivel para errar.
+ *
+ * Por que aqui e nao no prompt: a decisao e a MESMA em todo turno, o defeito e de
+ * FORMA (nao de conteudo) e o corpo falado ja passa por esta funcao — e o unico
+ * ponto por onde o texto da voz passa, nos DOIS caminhos (o modelo pedindo
+ * `enviar_como_audio` e o modo `sempre` da tela).
+ *
+ * A regra e emprestada do proprio arquivo: casar por FORMA, nunca por conteudo.
+ * `R$ 29,80` casa; a palavra "reais" ja escrita no texto nao casa (nao ha `R$` a
+ * frente), entao rodar duas vezes nao duplica nada.
+ */
+export function valorFalado(texto: string): string {
+  return texto
+    .replace(
+      /R\$\s*(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{2}))?/g,
+      (_m: string, inteiro: string, centavos?: string) => {
+        // Singular so quando e exatamente 1 e nao ha centavos.
+        const corpo = inteiro === "1" && (centavos === undefined || centavos === "00")
+          ? `${inteiro} real`
+          : `${inteiro} reais`;
+        // ",00" nao vira "zero centavos": some, porque nao acrescenta nada falado.
+        if (centavos === undefined || centavos === "00") return corpo;
+        // "R$ 29,80" -> "29 reais e 80 centavos" (antes, os centavos se perdiam).
+        return `${corpo} e ${centavos} centavos`;
+      },
+    )
+    // "12x" -> "12 vezes" (a voz lia "doze x").
+    .replace(/\b(\d{1,3})\s*x\b/gi, "$1 vezes")
+    // "50%" -> "50 por cento".
+    .replace(/(\d+(?:,\d+)?)\s*%/g, "$1 por cento");
+}
+
 export function corpoParaVoz(corpo: string): string {
-  let t = corpo;
+  // Primeiro o que a voz LERIA errado (preco com `R$`), depois a limpeza.
+  let t = valorFalado(corpo);
   // Emoji e pictogramas, menos `$` e `®` (que têm valor falado).
   t = t.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}]/gu, (m) =>
     m === "₹" || m === "💲" || m === "®" ? m : "",

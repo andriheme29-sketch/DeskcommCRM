@@ -195,10 +195,14 @@ describe("corpoParaVoz — o que a voz NÃO deve falar", () => {
     expect(corpoParaVoz("rsrs tudo certo")).toBe("tudo certo");
   });
 
-  it("PRESERVA o que carrega sentido falado: preço e texto normal", () => {
-    // O cifrão e o preço precisam sobreviver: é o que o cliente ouve.
-    const comPreco = "Hoje você paga R$ 297,00 no tratamento de 90 dias.";
-    expect(corpoParaVoz(comPreco)).toBe(comPreco);
+  it("TROCA o preço com cifrão pela forma falada — o cliente ouvia outro valor", () => {
+    // Medido em 13/10/2026 (voz Fish s2.1-pro-free + transcrição Scribe v1, 3 rodadas):
+    // a MESMA frase com `R$ 985`/`R$ 397` voltou com números DIFERENTES a cada rodada
+    // ("997,00 / 285,00 / 99,80" numa; "188 / 29,97" na outra). Por extenso voltou
+    // correto 3 de 3. O cifrão NÃO sobrevive até a voz — ver `valorFalado`.
+    expect(corpoParaVoz("Hoje você paga R$ 297,00 no tratamento de 90 dias.")).toBe(
+      "Hoje você paga 297 reais no tratamento de 90 dias.",
+    );
     const simples = "Entendi, qual é o seu peso e sua altura?";
     expect(corpoParaVoz(simples)).toBe(simples);
   });
