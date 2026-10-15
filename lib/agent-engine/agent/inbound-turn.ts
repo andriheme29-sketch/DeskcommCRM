@@ -38,6 +38,7 @@ import type pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { auxModelArgs, type AuxModelArgs } from './aux-model-args';
+import { sinalDoAuxiliar } from './teto-do-auxiliar';
 import type { ChannelAdapter, ChannelSendResult } from '../channel-adapter';
 
 import { withFields, type Logger } from '../obs/logger';
@@ -4983,6 +4984,10 @@ async function executarTurnoDoAgente(
               currentStage,
               resumo: effectivePrevious?.rolling_summary ?? null,
               ...argsAux(deps.knobs.stageClassifier.model),
+              // Teto de relógio: o `Promise.all` espera o mais lento, então um
+              // classificador preso segurava a resposta do cliente (medido: até
+              // 908s na `llm_calls`). A dica é opcional; o atendimento não.
+              abortSignal: sinalDoAuxiliar(),
             },
             { registry: deps.registry, log: runLog },
           )
@@ -5001,6 +5006,9 @@ async function executarTurnoDoAgente(
               // Knob ausente + organização ligando = roda com o modelo padrão dela,
               // que é a convenção já usada pelo stageClassifier.
               ...argsAux(deps.knobs.jailbreak?.model),
+              // Mesmo teto do stageClassifier, pelo mesmo motivo: advisório não
+              // pode ser o gargalo do turno.
+              abortSignal: sinalDoAuxiliar(),
             },
             { registry: deps.registry, log: runLog },
           )
@@ -5404,6 +5412,13 @@ async function executarTurnoDoAgente(
                   },
                 }
               : {}),
+            // Teto de relógio: o fechamento roda ANTES de a resposta sair, então
+            // um checkpoint preso é o CLIENTE esperando. Medido nesta instalação
+            // (2026-10-15, `llm_calls`): `checkpoint` sem teto chegou a **164s**
+            // num turno, e o turno inteiro a ~60s. A resposta ao cliente já
+            // tinha saído na 1ª chamada — o que falta aqui é só o JSON, e uma
+            // segunda tentativa (barata) cobre a recusa de shape.
+            abortSignal: sinalDoAuxiliar(),
             system,
             messages: [
               // prune: o checkpoint reusa a abertura só como texto — a mídia nativa (cara) já

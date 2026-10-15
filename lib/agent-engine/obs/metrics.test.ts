@@ -101,4 +101,27 @@ describe('recordRunMetrics: tempo de fila e duração do job', () => {
     expect(calls).toBe(0);
     expect(consultas.some((c) => c.sql.includes('insert into metrics'))).toBe(false);
   });
+
+  /**
+   * Regressão de um defeito medido: o insert passava `$1` cru para uma coluna
+   * `uuid`. Um `$1` sem tipo dentro de `unnest($3::text[], …)` não é inferido
+   * pelo Postgres, então TODA gravação de `run_*` morria com
+   * `column "organization_id" is of type uuid but expression is of type text`.
+   * O erro é engolido pelo `try/catch` do worker (`main.ts` loga em `error` e
+   * segue), então o defeito não derruba nada visível: as métricas de IA
+   * simplesmente param, e ninguém descobre pelo sintoma.
+   *
+   * O dublê não vê o banco — o que ele consegue garantir é o que o worker
+   * MANDA. Este caso trava a única cláusula que faltava: todo `$1` no insert
+   * carrega `::uuid`.
+   */
+  it('o organization_id do insert vai tipado como uuid — nunca $1 cru', async () => {
+    const { pool, consultas } = poolFalso(2);
+    await recordRunMetrics(pool, JOB);
+
+    const sql = insertDe(consultas).sql;
+    const crus = sql.match(/select\s+\$1(?!::uuid)/gi) ?? [];
+    expect(crus).toEqual([]);
+    expect(sql.match(/select\s+\$1::uuid/gi)?.length).toBe(2);
+  });
 });

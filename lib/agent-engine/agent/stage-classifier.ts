@@ -156,6 +156,8 @@ export async function classifyStage(
     resumo?: string | null;
     model?: string;
     llmOverride?: LlmResolveOverride;
+    /** Teto de relógio do auxiliar (`teto-do-auxiliar.ts`) — aborta e a dica degrada. */
+    abortSignal?: AbortSignal;
   },
   deps: { registry?: ProviderRegistry; log: Logger },
 ): Promise<LeadStage | null> {
@@ -171,6 +173,7 @@ export async function classifyStage(
         purpose: 'stage_classifier',
         ...(args.model !== undefined ? { model: args.model } : {}),
         ...(args.llmOverride !== undefined ? { llmOverride: args.llmOverride } : {}),
+        ...(args.abortSignal !== undefined ? { abortSignal: args.abortSignal } : {}),
         messages: [
           { role: 'user', content: buildClassifierMessage(args.context, args.currentStage, args.resumo ?? null) },
         ],

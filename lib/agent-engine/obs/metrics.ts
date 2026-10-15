@@ -114,11 +114,16 @@ export async function recordRunMetrics(
   // labels SÓ ids/atribuição (job_id É o run id) — PII jamais.
   const labels = { job_id: job.id, contact_id: job.contact_id, kind: job.kind };
   await db.query(
+    // `$1::uuid` é obrigatório: `organization_id` é uuid e um `$1` sem tipo dentro de
+    // `unnest($3::text[], …)` NÃO é inferido pelo Postgres — a query morre com
+    // `column "organization_id" is of type uuid but expression is of type text`, o
+    // insert inteiro é perdido e o worker segue (o erro é engolido no main.ts).
+    // Foi assim que todas as métricas `run_*` pararam por uma semana, em silêncio.
     `insert into metrics (organization_id, name, labels, value)
-     select $1, t.name, $2::jsonb, t.value
+     select $1::uuid, t.name, $2::jsonb, t.value
      from unnest($3::text[], $4::float8[]) as t(name, value)
      union all
-     select $1, '${WALL_METRIC}', $2::jsonb,
+     select $1::uuid, '${WALL_METRIC}', $2::jsonb,
             greatest(0, extract(epoch from (clock_timestamp() - $5::timestamptz)) * 1000)
      where $5::timestamptz is not null`,
     [job.organization_id, JSON.stringify(labels), names, values, claim],

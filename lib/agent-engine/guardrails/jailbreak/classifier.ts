@@ -126,7 +126,13 @@ export async function classifyJailbreak(
   db: pg.Pool,
   cfg: LlmEdgeConfig,
   ids: { tenantId: string; leadId?: string | null; jobId?: string },
-  args: { message: string; model?: string; llmOverride?: LlmResolveOverride },
+  args: {
+    message: string;
+    model?: string;
+    llmOverride?: LlmResolveOverride;
+    /** Teto de relógio do auxiliar (`teto-do-auxiliar.ts`) — aborta e a camada degrada. */
+    abortSignal?: AbortSignal;
+  },
   deps: { registry?: ProviderRegistry; log: Logger },
 ): Promise<JailbreakClassification> {
   let call: Awaited<ReturnType<typeof runModelCall>>;
@@ -141,6 +147,7 @@ export async function classifyJailbreak(
         purpose: 'jailbreak_detect',
         ...(args.model !== undefined ? { model: args.model } : {}),
         ...(args.llmOverride !== undefined ? { llmOverride: args.llmOverride } : {}),
+        ...(args.abortSignal !== undefined ? { abortSignal: args.abortSignal } : {}),
         messages: [{ role: 'user', content: buildJailbreakMessage(args.message) }],
       },
       { registry: deps.registry, log: deps.log },
